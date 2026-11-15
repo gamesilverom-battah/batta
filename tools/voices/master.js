@@ -9,7 +9,7 @@ const path = require('path');
 
 const DIR = __dirname, OUT = path.join(__dirname, '..', '..', 'app', 'assets', 'voices');
 const TARGET = -16; // LUFS
-const TRIM = { wadamtih: -3, aslam: -2.5, sulaiman: -2.5, musabbah: -2.5, medhat: -2.5, khusaib: -3 }; // dB: شخصية تطلع بالسمع أعلى من غيرها رغم نفس القياس (صوته أفخم)
+const TRIM = { wadamtih: 0, bodhirs: 3, aslam: -2.5, sulaiman: -2.5, musabbah: -2.5, medhat: -2.5, khusaib: -3 }; // dB: شخصية تطلع بالسمع أعلى من غيرها رغم نفس القياس (صوته أفخم)
 const KEEP = new Set(['wadamtih_1.wav']); // معالج وجاهز بـ app/assets/voices، وتسجيله الأصلي ضاع: لا تعيد معالجته
 const CEILING = -1.5; // dBFS أعلى قمة
 const THRESHOLD = -22, RATIO = 2.5, ATTACK = 0.006, RELEASE = 0.09; // الضاغط

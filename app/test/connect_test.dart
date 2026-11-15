@@ -7,7 +7,7 @@ import 'package:kout/net.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
-  test('an old saved server address is ignored (only one the player typed is kept)', () async {
+  test('saved server addresses are ignored: the game always uses its own server (no server settings)', () async {
     SharedPreferences.setMockInitialValues({'server': 'ws://10.0.2.2:8080', 'name': 'مهند'});
     final c = GameClient();
     await c.loadPrefs();
@@ -17,7 +17,7 @@ void main() {
     SharedPreferences.setMockInitialValues({'serverCustom': 'ws://192.168.0.5:8080'});
     final d = GameClient();
     await d.loadPrefs();
-    expect(d.serverUrl, 'ws://192.168.0.5:8080');
+    expect(d.serverUrl, GameClient.defaultServerUrl());
   });
 
   test('keeps retrying while the server is still waking up, then connects', () async {

@@ -63,10 +63,29 @@ void main() {
     expect(w.balance, 900); // مرة وحدة بس
     await w.onState(code: '1', phase: 'matchEnd', winner: 0, myTeam: 0);
     expect(w.balance, 1070); // رجع 170
+    expect(w.matchResult, (won: true, amount: 170)); // شاشة النتيجة تطيّر 170 لـ«غوازيك»
     await w.onState(code: '1', phase: 'bidding', winner: null, myTeam: 0); // مباراة ثانية بنفس الغرفة
     expect(w.balance, 970);
     await w.onLeave(); // طلع بالنص: خسر
     expect(w.balance, 970);
+    expect(w.matchResult, isNull);
+    // خسارة مباراة كاملة: اللي حطه يروح
+    w.enterSearch();
+    await w.onState(code: '2', phase: 'bidding', winner: null, myTeam: 0);
+    await w.onState(code: '2', phase: 'matchEnd', winner: 1, myTeam: 0);
+    expect(w.matchResult, (won: false, amount: 100));
+    expect(w.balance, 870);
+    await w.onLeave();
+    w.balance = 970;
+    // الإعلانات: 50 لكل واحد، 5 بس بكل 24 ساعة
+    final t0 = DateTime.now();
+    for (var i = 0; i < Wallet.adsPerDay; i++) {
+      expect(await w.claimAd(now: t0.add(Duration(minutes: i))), true);
+    }
+    expect(await w.claimAd(now: t0.add(const Duration(minutes: 10))), false);
+    expect(w.balance, 970 + Wallet.adsPerDay * Wallet.adReward);
+    expect(w.adsLeft(t0.add(const Duration(hours: 24, minutes: 1))), 2); // أول إعلانين صار لهم 24 ساعة
+    w.balance = 970;
     expect(w.buy(shopItems({}).firstWhere((i) => i.id == 'blue')), true);
     expect(w.balance, 670);
     expect(w.owns('table', 'blue'), true);
@@ -172,14 +191,17 @@ void main() {
       await _tap(tester, find.text('تاريخك'));
       await _shot(tester, 'build/preview_store_${name}_history.png');
       await _tap(tester, find.byIcon(Icons.arrow_back).first);
+      // أونلاين: كل الأطوار بصفحة وحدة، وزر البحث
       await _tap(tester, find.text('6 لاعبين'));
-      await _tap(tester, find.text('دور كامل'));
-      await _shot(tester, 'build/preview_store_${name}_stakes.png');
-      // دخول جيم: العملات تطير من الرصيد على الخيار
-      await _tap(tester, find.text('تفوز: 272'));
+      await _shot(tester, 'build/preview_store_${name}_online.png');
+      await _tap(tester, find.text('دور على السريع'));
+      await _tap(tester, find.text('بدون إشارة'));
+      expect(find.textContaining('تفوز 170'), findsWidgets); // مبالغ الدور السريع
+      await _shot(tester, 'build/preview_store_${name}_online2.png');
+      // دخول جيم: العملات تطير من الرصيد لزر البحث
+      await _tap(tester, find.text('ابحث'));
       await _shot(tester, 'build/preview_store_${name}_stakefly.png');
-      await tester.pump(const Duration(seconds: 1));
-      await _tap(tester, find.byIcon(Icons.arrow_back).first);
+      await tester.pump(const Duration(seconds: 2));
       await _tap(tester, find.byIcon(Icons.arrow_back).first);
       // التدريب: الخيار الثالث «قوانين اللعب»
       await _tap(tester, find.text('تدريب'));

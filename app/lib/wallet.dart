@@ -1,24 +1,28 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'i18n.dart';
+import 'menus.dart' show Bob, Shine;
 import 'progress.dart';
 
 /// غرض بالمتجر: شخصية أو لون طاولة أو خلفية
 class ShopItem {
   final String id;
   final String kind; // char / table / bg
-  final String name;
+  final String nameAr;
+  String get name => tr(nameAr);
   final int price; // بالغوازي (0 = مجاني)
   final String usd; // سعره بالفلوس الحقيقية (للعرض الحين، الشراء «قريباً»)
-  const ShopItem(this.id, this.kind, this.name, this.price, this.usd);
+  const ShopItem(this.id, this.kind, this.nameAr, this.price, this.usd);
 }
 
 /// ألوان وسط الطاولة: الأول هو الحالي ومجاني
 class TableTheme {
-  final String id, name;
+  final String id, nameAr;
+  String get name => tr(nameAr);
   final List<Color> felt; // تدرج من الوسط للأطراف
   final Color edge; // لمعة حافة الخشب من جوا
-  const TableTheme(this.id, this.name, this.felt, this.edge);
+  const TableTheme(this.id, this.nameAr, this.felt, this.edge);
 }
 
 const tableThemes = [
@@ -30,9 +34,10 @@ const tableThemes = [
 
 /// خلفية الطاولة: نفس الحصير بلون ثاني (null = الحصير الأصلي)
 class BgTheme {
-  final String id, name;
+  final String id, nameAr;
+  String get name => tr(nameAr);
   final Color? tint;
-  const BgTheme(this.id, this.name, this.tint);
+  const BgTheme(this.id, this.nameAr, this.tint);
 }
 
 const bgThemes = [
@@ -64,6 +69,8 @@ class Wallet extends ChangeNotifier {
   static final instance = Wallet._();
 
   static const startBalance = 1000, dailyGift = 200;
+  static const giftEvery = Duration(hours: 24); // الهدية تفتح بعد 24 ساعة من آخر ما استلمها اللاعب (كل لاعب بوقته)
+  static const adReward = 50, adsPerDay = 5; // جايزة مشاهدة إعلان، وكم إعلان بكل 24 ساعة
   static const winBonus = 0.7; // الفايز يرجع له اللي حطه وفوقه 70%
 
   int balance = startBalance;
@@ -71,6 +78,10 @@ class Wallet extends ChangeNotifier {
   String table = 'grey', bg = 'mat';
   int stake = 0; // المبلغ المختار للبحث الجاي
   bool giftReady = false; // هدية اليوم موجودة وما استلمها
+  DateTime? _giftAt; // آخر مرة استلم فيها الهدية (أو أول مرة فتح اللعبة)
+  final List<DateTime> _adsAt = []; // أوقات الإعلانات اللي شافها آخر 24 ساعة
+  // آخر مباراة بغوازي خلصت: فاز (رجع له المبلغ وفوقه) أو خسر (راح اللي حطه). شاشة النتيجة تسوي عليها أنيميشن العملات
+  ({bool won, int amount})? matchResult;
 
   // الجيم اللي حط فيه غوازي: كود الغرفة والمبلغ
   String? _stakeRoom;
@@ -99,11 +110,21 @@ class Wallet extends ChangeNotifier {
     bg = p.getString('bgTheme') ?? 'mat';
     _stakeRoom = p.getString('stakeRoom');
     _stakeAmount = p.getInt('stakeAmount');
-    // هدية اليوم تنتظر اللاعب يضغط عليها (أول مرة باللعبة ياخذ رصيد البداية بس)
-    final today = _day(now ?? DateTime.now());
-    final last = p.getString('giftDay');
-    if (last == null) await p.setString('giftDay', today);
-    giftReady = last != null && last != today;
+    // هدية اليوم تنتظر اللاعب يضغط عليها، وتفتح بعد 24 ساعة من آخر استلام (أول مرة باللعبة ياخذ رصيد البداية بس)
+    final t = now ?? DateTime.now();
+    final at = p.getInt('giftAt');
+    if (at != null) {
+      _giftAt = DateTime.fromMillisecondsSinceEpoch(at);
+    } else {
+      // من النسخ القديمة (كانت باليوم): إذا ما استلمها اليوم تكون جاهزة على طول
+      final last = p.getString('giftDay');
+      _giftAt = last == null || last == _day(t) ? t : t.subtract(giftEvery);
+      await p.setInt('giftAt', _giftAt!.millisecondsSinceEpoch);
+    }
+    _adsAt
+      ..clear()
+      ..addAll((p.getStringList('adsAt') ?? const []).map((e) => DateTime.fromMillisecondsSinceEpoch(int.parse(e))));
+    _refreshGift(t);
     // جيم كان شغال وانقفلت اللعبة: يعتبر خسارة (المبلغ انخصم من قبل)
     if (_stakeRoom != null) await _clearStake(p);
     await _save(p);
@@ -144,20 +165,60 @@ class Wallet extends ChangeNotifier {
     _save();
   }
 
+  void _refreshGift(DateTime now) => giftReady = untilNextGift(now) <= Duration.zero;
+
+  /// خانة الهدية تسأل كل شوي وهي ظاهرة: إذا خلصت الـ 24 ساعة تفتح (لو اللعبة مفتوحة من قبل)
+  void checkGift() {
+    if (!giftReady && untilNextGift() <= Duration.zero) {
+      giftReady = true;
+      notifyListeners();
+    }
+  }
+
   /// استلام هدية اليوم (بضغطة من اللاعب)
   Future<bool> claimGift({DateTime? now}) async {
     if (!giftReady) return false;
-    giftReady = false;
+    final t = now ?? DateTime.now();
+    _giftAt = t;
+    _refreshGift(t);
     balance += dailyGift;
     notifyListeners();
     final p = await SharedPreferences.getInstance();
-    await p.setString('giftDay', _day(now ?? DateTime.now()));
+    await p.setInt('giftAt', t.millisecondsSinceEpoch);
     await _save(p);
     return true;
   }
 
-  /// كم باقي على هدية بكرة
-  static Duration untilNextGift(DateTime now) => DateTime(now.year, now.month, now.day + 1).difference(now);
+  /// كم باقي على الهدية الجاية (24 ساعة من آخر استلام)
+  Duration untilNextGift([DateTime? now]) => _giftAt == null ? Duration.zero : _giftAt!.add(giftEvery).difference(now ?? DateTime.now());
+
+  /// الإعلانات: كم باقي له بآخر 24 ساعة
+  int adsLeft([DateTime? now]) {
+    final t = now ?? DateTime.now();
+    return adsPerDay - _adsAt.where((a) => t.difference(a) < giftEvery).length;
+  }
+
+  /// متى يقدر يشوف إعلان ثاني (لو خلصت الإعلانات)
+  Duration untilNextAd([DateTime? now]) {
+    final t = now ?? DateTime.now();
+    final recent = _adsAt.where((a) => t.difference(a) < giftEvery).toList()..sort();
+    return recent.length < adsPerDay ? Duration.zero : recent.first.add(giftEvery).difference(t);
+  }
+
+  /// جايزة مشاهدة إعلان كامل
+  Future<bool> claimAd({DateTime? now}) async {
+    final t = now ?? DateTime.now();
+    if (adsLeft(t) <= 0) return false;
+    _adsAt
+      ..removeWhere((a) => t.difference(a) >= giftEvery)
+      ..add(t);
+    balance += adReward;
+    notifyListeners();
+    final p = await SharedPreferences.getInstance();
+    await p.setStringList('adsAt', [for (final a in _adsAt) '${a.millisecondsSinceEpoch}']);
+    await _save(p);
+    return true;
+  }
 
   /// جايزة (تحدي)
   void addGhawazi(int amount) {
@@ -184,6 +245,9 @@ class Wallet extends ChangeNotifier {
         final payout = (_stakeAmount! * (1 + winBonus)).round();
         balance += payout;
         Progress.instance.addWinnings(payout - _stakeAmount!);
+        matchResult = (won: true, amount: payout);
+      } else {
+        matchResult = (won: false, amount: _stakeAmount!);
       }
       await _clearStake(p);
       await _save(p);
@@ -203,6 +267,7 @@ class Wallet extends ChangeNotifier {
 
   /// طلع من الغرفة: إذا المباراة ما خلصت راح اللي حطه
   Future<void> onLeave() async {
+    matchResult = null;
     roomStake = null;
     stakedRoom = null;
     if (_stakeRoom == null) return;
@@ -242,10 +307,11 @@ class GhawaziAmount extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Row(mainAxisSize: MainAxisSize.min, children: [
         if (label) ...[
-          Text('غوازيك', style: TextStyle(fontFamily: 'ElMessiri', fontSize: size * 0.8, fontWeight: FontWeight.w700, color: color)),
+          Text(tr('غوازيك'), style: TextStyle(fontFamily: 'ElMessiri', fontSize: size * 0.8, fontWeight: FontWeight.w700, color: color)),
           SizedBox(width: size * 0.4),
         ],
-        GhawaziIcon(size: size * 1.15),
+        // خانة «غوازيك»: العملة تتحرك وتلمع مثل أيقونات القوائم
+        if (label) Bob(phase: 0.3, lift: 2, child: Shine(child: GhawaziIcon(size: size * 1.15))) else GhawaziIcon(size: size * 1.15),
         SizedBox(width: size * 0.3),
         // الرقم يعدّ لين يوصل للجديد (لما تنضاف أو تنسحب غوازي)
         TweenAnimationBuilder<double>(

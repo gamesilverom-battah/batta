@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
+import 'i18n.dart';
 import 'avatars.dart';
 import 'cards.dart';
+import 'coins.dart';
 import 'main.dart' show MenuPanel;
 import 'menus.dart';
 import 'net.dart';
@@ -21,6 +23,9 @@ class StorePage extends StatefulWidget {
 class _StorePageState extends State<StorePage> {
   final w = Wallet.instance;
   final _focusKey = GlobalKey();
+  final _balanceKey = GlobalKey();
+  final Map<String, GlobalKey> _tileKeys = {};
+  bool _flying = false;
 
   @override
   void initState() {
@@ -33,14 +38,16 @@ class _StorePageState extends State<StorePage> {
     }
   }
 
+  /// شراء: العملات تطير من «غوازيك» للغرض، وأول ما توصل ينخصم السعر ويصير لك
   void _buy(ShopItem item) {
-    if (w.buy(item)) {
-      Sfx.tap();
+    if (_flying) return;
+    if (w.balance < item.price) return _toast(tr('غوازيك ما تكفي'));
+    _flying = true;
+    flyCoins(context, from: _balanceKey, to: _tileKeys['${item.kind}:${item.id}']!, onLand: () {
+      if (!w.buy(item)) return;
       w.equip(item.kind, item.id);
-      _toast('اشتريت ${item.name}');
-    } else {
-      _toast('غوازيك ما تكفي');
-    }
+      if (mounted) _toast(trf('اشتريت {0}', [item.name]));
+    }, onDone: () => _flying = false);
   }
 
   void _toast(String msg) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -66,9 +73,9 @@ class _StorePageState extends State<StorePage> {
           textStyle: const TextStyle(fontFamily: 'ElMessiri', fontSize: 15, fontWeight: FontWeight.w700),
         );
     if (mine) {
-      if (kind == 'char') return FilledButton(onPressed: null, style: small(Colors.white, Colors.black), child: const Text('عندك'));
-      if (using) return FilledButton(onPressed: null, style: small(KoutColors.madmoon, Colors.white), child: const Text('مستخدم ✓'));
-      return Pressable(child: FilledButton(onPressed: withTap(() => w.equip(kind, id)), style: small(Colors.white, Colors.black), child: const Text('استخدم')));
+      if (kind == 'char') return FilledButton(onPressed: null, style: small(Colors.white, Colors.black), child: Text(tr('عندك')));
+      if (using) return FilledButton(onPressed: null, style: small(KoutColors.madmoon, Colors.white), child: Text(tr('مستخدم ✓')));
+      return Pressable(child: FilledButton(onPressed: withTap(() => w.equip(kind, id)), style: small(Colors.white, Colors.black), child: Text(tr('استخدم'))));
     }
     // مو عندك: خيارين، بالغوازي وبالدولار («قريباً» لين ينزل التطبيق على المتاجر)
     final enough = w.balance >= item!.price;
@@ -82,11 +89,11 @@ class _StorePageState extends State<StorePage> {
       FilledButton(
         onPressed: null,
         style: small(Colors.white, Colors.black),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
+        child: FittedBox(child: Row(mainAxisSize: MainAxisSize.min, children: [
           Text(item.usd, style: const TextStyle(fontSize: 15)),
           const SizedBox(width: 5),
-          const Text('قريباً', style: TextStyle(fontSize: 11)),
-        ]),
+          Text(tr('قريباً'), style: TextStyle(fontSize: 11)),
+        ])),
       ),
     ]);
   }
@@ -94,7 +101,7 @@ class _StorePageState extends State<StorePage> {
   Widget _tile(String kind, String id, String name, ShopItem? item) {
     final locked = !w.owns(kind, id);
     final focused = widget.focus == '$kind:$id';
-    return Container(
+    return KeyedSubtree(key: _tileKeys.putIfAbsent('$kind:$id', GlobalKey.new), child: Container(
       key: focused ? _focusKey : null,
       width: 132,
       padding: const EdgeInsets.fromLTRB(6, 8, 6, 8),
@@ -117,7 +124,7 @@ class _StorePageState extends State<StorePage> {
         const SizedBox(height: 6),
         _button(kind, id, item),
       ]),
-    );
+    ));
   }
 
   Widget _section(String title, List<Widget> tiles) => Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -143,15 +150,15 @@ class _StorePageState extends State<StorePage> {
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
                   child: Row(children: [
-                    Expanded(child: BackRow(title: 'المتجر', onBack: widget.onBack)),
-                    MenuChip(child: GhawaziAmount(w.balance, label: true)),
+                    Expanded(child: BackRow(title: tr('المتجر'), onBack: widget.onBack)),
+                    MenuChip(key: _balanceKey, child: GhawaziAmount(w.balance, label: true)),
                   ]),
                 ),
                 Expanded(
                   child: ListView(padding: const EdgeInsets.fromLTRB(16, 0, 16, 16), children: [
-                    _section('الشخصيات', tilesOf('char', [for (final id in lockedChars.keys) (id, characterNames[id] ?? id)])),
-                    _section('لون الطاولة', tilesOf('table', [for (final t in tableThemes) (t.id, t.name)])),
-                    _section('خلفية الطاولة', tilesOf('bg', [for (final b in bgThemes) (b.id, b.name)])),
+                    _section(tr('الشخصيات'), tilesOf('char', [for (final id in lockedChars.keys) (id, characterNames[id] ?? id)])),
+                    _section(tr('لون الطاولة'), tilesOf('table', [for (final t in tableThemes) (t.id, t.name)])),
+                    _section(tr('خلفية الطاولة'), tilesOf('bg', [for (final b in bgThemes) (b.id, b.name)])),
                   ]),
                 ),
               ]),
@@ -303,7 +310,7 @@ class PrefsPage extends StatelessWidget {
             ),
             const SizedBox(height: 4),
             Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 13, color: locked ? const Color(0xFF999999) : Colors.white, fontWeight: FontWeight.w700)),
-            if (locked) const Text('من المتجر', style: TextStyle(fontSize: 11, color: Color(0xFFFFE08A))),
+            if (locked) Text(tr('من المتجر'), style: TextStyle(fontSize: 11, color: Color(0xFFFFE08A))),
           ]),
         ),
       ));
@@ -327,11 +334,11 @@ class PrefsPage extends StatelessWidget {
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 760),
               child: Column(children: [
-                Padding(padding: const EdgeInsets.fromLTRB(16, 10, 16, 0), child: BackRow(title: 'التفضيلات', onBack: onBack)),
+                Padding(padding: const EdgeInsets.fromLTRB(16, 10, 16, 0), child: BackRow(title: tr('التفضيلات'), onBack: onBack)),
                 Expanded(
                   child: ListView(padding: const EdgeInsets.fromLTRB(16, 0, 16, 16), children: [
-                    _section('اسمك', [_NameEdit(client: client)]),
-                    _section('شخصيتك', [
+                    _section(tr('اسمك'), [_NameEdit(client: client)]),
+                    _section(tr('شخصيتك'), [
                       for (final id in chars)
                         _tile(
                           item: 'char:$id',
@@ -342,11 +349,11 @@ class PrefsPage extends StatelessWidget {
                           onChoose: () => client.chooseChar(id),
                         ),
                     ]),
-                    _section('لون الطاولة', [
+                    _section(tr('لون الطاولة'), [
                       for (final t in tableThemes)
                         _tile(item: 'table:${t.id}', preview: _MiniTable(theme: t), name: t.name, chosen: w.table == t.id, locked: !w.owns('table', t.id), onChoose: () => w.equip('table', t.id)),
                     ]),
-                    _section('خلفية الطاولة', [
+                    _section(tr('خلفية الطاولة'), [
                       for (final b in bgThemes)
                         _tile(item: 'bg:${b.id}', preview: _MiniBg(theme: b), name: b.name, chosen: w.bg == b.id, locked: !w.owns('bg', b.id), onChoose: () => w.equip('bg', b.id)),
                     ]),
@@ -420,27 +427,21 @@ class _NameEdit extends StatefulWidget {
 }
 
 class _NameEditState extends State<_NameEdit> {
-  late final _c = TextEditingController(text: widget.client.name);
-
   @override
-  void dispose() {
-    _c.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 340),
-        child: MenuPanel(
-          padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
-          child: TextField(
-            controller: _c,
-            style: const TextStyle(fontSize: 18, color: Colors.white),
-            decoration: const InputDecoration(labelText: 'اسمك', counterText: '', isDense: true),
-            maxLength: 20,
-            onChanged: (v) {
-              if (v.trim().isNotEmpty) widget.client.saveName(v);
-            },
+  Widget build(BuildContext context) => ListenableBuilder(
+        listenable: widget.client,
+        builder: (context, _) => ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 340),
+          child: MenuPanel(
+            padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+            child: Row(children: [
+              Expanded(child: Text(widget.client.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 18, color: Colors.white, fontWeight: FontWeight.w700))),
+              Pressable(child: OutlinedButton(
+                onPressed: withTap(() => showNameChange(context, widget.client)),
+                style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4), minimumSize: const Size(0, 34)),
+                child: Text(tr('تغيير الاسم'), style: TextStyle(fontSize: 14)),
+              )),
+            ]),
           ),
         ),
       );

@@ -3,12 +3,15 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 
+import 'i18n.dart';
 import 'avatars.dart';
 import 'cards.dart';
+import 'coins.dart';
 import 'fullscreen.dart';
 import 'main.dart' show showErrors;
 import 'menus.dart';
 import 'net.dart';
+import 'progress_pages.dart' show showPlayerProfile;
 import 'sounds.dart';
 import 'store.dart' show MatBackground;
 import 'wallet.dart';
@@ -160,6 +163,7 @@ class _TableScreenState extends State<TableScreen> with TickerProviderStateMixin
   String? _shakeCard;
   int _shakeId = 0;
   final Map<String, Offset> _releasedAt = {}; // الورقة اللي انسحبت ترمى من مكان ما تركها اللاعب
+  final Map<String, Offset> _handPos = {}; // مكان كل ورقة بيدي (نصها): الورقة ترمى من مكانها باليد مو من الشخصية
   final _boardKey = GlobalKey();
 
   GameClient get c => widget.client;
@@ -279,6 +283,7 @@ class _TableScreenState extends State<TableScreen> with TickerProviderStateMixin
       _dragCard = null;
       _collecting = null;
       _releasedAt.clear();
+      _handPos.clear();
       _landed.clear();
       c.slapPending.clear();
       if (freshDeal) {
@@ -324,8 +329,8 @@ class _TableScreenState extends State<TableScreen> with TickerProviderStateMixin
       } else if (t['card'] == 'JG') {
         Sfx.joker();
       } else if (trump is String && t['card'] == '$trump-14') {
-        // خال الحكم (آص الحكم): صوت ضربة على الطاولة، يوافق وصول الورقة (طيرانها 220ms)
-        Future.delayed(const Duration(milliseconds: 150), Sfx.trumpAce);
+        // خال الحكم (آص الحكم): صوت لكمة (هبّة وبعدها ضربة عند ~160ms من الملف)، فالضربة توافق وصول الورقة (طيرانها 220ms)
+        Future.delayed(const Duration(milliseconds: 60), Sfx.trumpAce);
       } else {
         Sfx.play();
       }
@@ -386,8 +391,8 @@ class _TableScreenState extends State<TableScreen> with TickerProviderStateMixin
         if (seat % 2 == t) _say(seat, event);
       }
     }
-    if (type == 'bawanWin' || type == 'bawanFail') {
-      // فوز بالباون أو انقلاب الباون: كل شخصيات الفريق الفايز صوت 6
+    if (type == 'bawanWin' || type == 'bawanFail' || type == 'blueEarly' || type == 'blueStuck') {
+      // فوز بالباون أو انقلاب الباون أو خسارة بالجوكر الكبير (قبل الصغير، أو بقى وحده وعليه الافتتاح): المباراة تخلص، وكل شخصيات الفريق الفايز صوت 6
       team(last['team'] as int, VoiceEvent.oppFailed);
     } else if (matchWinner != null) {
       // فوز بالمباراة: كل شخصيات الفريق الفايز صوت 5
@@ -569,10 +574,15 @@ class _TableScreenState extends State<TableScreen> with TickerProviderStateMixin
                   _centerInfo(v, b), // على الطاولة نفسها: الأوراق (المنزولة والمسحوبة) تغطي عليها
                   Positioned.fill(child: RepaintBoundary(child: Stack(clipBehavior: Clip.none, children: _trickLayer(v, b, n)))),
                   for (var seat = 0; seat < n; seat++)
-                    _seatAt(b, _rel(seat, n), RepaintBoundary(child: _Seat(client: c, view: v, seat: seat, seconds: _seconds, me: seat == c.mySeat, size: b.avatar, nameLeft: _rel(seat, n) == n ~/ 2, voice: _talking[seat], toward: b.toward(_rel(seat, n)), showSeconds: !(b.landscape && seat == c.mySeat)))),
+                    _seatAt(b, _rel(seat, n), GestureDetector(
+                      // الضغط على أي شخصية: بروفايل اللاعب (مستواه وإنجازاته)
+                      onTap: () => showPlayerProfile(context, c, seat),
+                      child: RepaintBoundary(child: _Seat(client: c, view: v, seat: seat, seconds: _seconds, me: seat == c.mySeat, size: b.avatar, nameLeft: _rel(seat, n) == n ~/ 2, voice: _talking[seat], toward: b.toward(_rel(seat, n)), showSeconds: !(b.landscape && seat == c.mySeat))))),
+                  // ورقتي باللمّة الحالية: فوق الشخصيات
+                  Positioned.fill(child: RepaintBoundary(child: Stack(clipBehavior: Clip.none, children: _trickLayer(v, b, n, mine: true)))),
                   _dealLayer(v, b, n),
                   Positioned.fill(child: RepaintBoundary(child: Stack(clipBehavior: Clip.none, children: _handLayer(v, b)))),
-                  _signalRow(v, b),
+                  if (v['signals'] != false) _signalRow(v, b), // «بدون إشارة»: ما فيه أزرار إشارات
                   _slapLayer(b),
                   // النتيجة فوق يسار، وجنبها زر نشرة الجولات
                   Positioned(
@@ -640,7 +650,7 @@ class _TableScreenState extends State<TableScreen> with TickerProviderStateMixin
       SuitIcon(trump, size: 34, color: Colors.black),
       SuitIcon(trump, size: 28, color: isRedSuit(trump) ? const Color(0xFFFF4D4D) : const Color(0xFF2B2B2B)),
     ]);
-    final bid = OutlinedText(bawan ? 'باون' : '${v['currentBid']}', size: 30, color: bawan ? KoutColors.gold : Colors.white);
+    final bid = OutlinedText(bawan ? tr('باون') : '${v['currentBid']}', size: 30, color: bawan ? KoutColors.gold : Colors.white);
     final name = OutlinedText(c.seatName(buyer), size: b.landscape ? 15 : 12, color: KoutColors.team(buyer % 2));
     if (b.landscape) {
       // بالعرضي: يسار (الحكم والعدد) ويمين (الشاري)، جنب أوراق الجنبين بنفس المسافة من الوسط
@@ -657,7 +667,7 @@ class _TableScreenState extends State<TableScreen> with TickerProviderStateMixin
         child: IgnorePointer(
           child: Stack(children: [
             at(-d, Column(mainAxisSize: MainAxisSize.min, children: [suit, bid])),
-            at(d, Column(mainAxisSize: MainAxisSize.min, children: [const OutlinedText('الشاري', size: 11, color: Color(0xFFEEEEEE)), name])),
+            at(d, Column(mainAxisSize: MainAxisSize.min, children: [OutlinedText(tr('الشاري'), size: 11, color: Color(0xFFEEEEEE)), name])),
           ]),
         ),
       );
@@ -676,13 +686,14 @@ class _TableScreenState extends State<TableScreen> with TickerProviderStateMixin
     );
   }
 
-  List<Widget> _trickLayer(Map<String, dynamic> v, _Board b, int n) {
+  /// mine: ورقتي بس (تنرسم فوق الشخصيات عشان وهي طالعة من يدي ما تمر تحت شخصيتي)، وإلا الباقي
+  List<Widget> _trickLayer(Map<String, dynamic> v, _Board b, int n, {bool mine = false}) {
     final w = b.cardW;
-    final current = (v['trick'] as List).cast<Map<String, dynamic>>();
+    final current = (v['trick'] as List).cast<Map<String, dynamic>>().where((t) => (_rel(t['seat'] as int, n) == 0) == mine);
     final out = <Widget>[];
 
     // اللمّة اللي قاعدة تنلم: آخر ورقة توصل، والورقة الفايزة تجمع الباقي عندها، وبعدها كلها تروح للفائز
-    final last = _collecting;
+    final last = mine ? null : _collecting;
     if (last != null) {
       final cards = (last['cards'] as List).cast<Map<String, dynamic>>();
       final winner = last['winner'] as int;
@@ -756,7 +767,8 @@ class _TableScreenState extends State<TableScreen> with TickerProviderStateMixin
     return out;
   }
 
-  Offset _fromFor(String card, _Board b, int rel) => (rel == 0 ? _releasedAt[card] : null) ?? b.seats[rel];
+  // ورقتي: من مكان ما تركها اللاعب (سحب)، وإلا من مكانها باليد (لمسة، أو رمي تلقائي). الباقين: من شخصياتهم
+  Offset _fromFor(String card, _Board b, int rel) => (rel == 0 ? (_releasedAt[card] ?? _handPos[card]) : null) ?? b.seats[rel];
 
   // ترتيب اللي ياخذون ورق: يبدأ باللي على يمين الموزع (عكس عقارب الساعة، مثل اللعب).
   // ورق الموزع عنده أصلاً، إلا إذا الموزع أنا: ورقي ينزل لصف اليد
@@ -855,6 +867,7 @@ class _TableScreenState extends State<TableScreen> with TickerProviderStateMixin
       final slot = _handSlot(b, i, n);
       final left = slot.left, angle = slot.angle;
       final top = slot.top + (b.landscape ? (sel ? -14 : (myTurn && ok ? 4 : _dealtDrop(b))) : (sel ? -8 : (myTurn && ok ? 18 : _dealtDrop(b))));
+      _handPos[card] = Offset(left + w / 2, top + w * cardRatio / 2);
       // وقت التوزيع الورقة تبين بصف اليد لحظة وصولها
       final land = order.contains(0) ? _dealStart(order.indexOf(0), i, order.length) + 0.25 : 0.6;
       Widget face = _FlipCard(
@@ -1023,7 +1036,7 @@ class _TableScreenState extends State<TableScreen> with TickerProviderStateMixin
         child: buyer == me
             ? Column(mainAxisSize: MainAxisSize.min, children: [
                 Row(mainAxisSize: MainAxisSize.min, children: [
-                  const Text('حكمك؟', style: TextStyle(fontSize: 22, color: KoutColors.ink)),
+                  Text(tr('حكمك؟'), style: TextStyle(fontSize: 22, color: KoutColors.ink)),
                   if (left != null) _Countdown(seconds: _seconds),
                 ]),
                 const SizedBox(height: 12),
@@ -1036,32 +1049,32 @@ class _TableScreenState extends State<TableScreen> with TickerProviderStateMixin
                         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                         child: Column(mainAxisSize: MainAxisSize.min, children: [
                           SuitIcon(s, size: 30, color: isRedSuit(s) ? const Color(0xFFFF4D4D) : Colors.white),
-                          Text(suitNames[s]!, style: TextStyle(fontSize: 14, color: isRedSuit(s) ? const Color(0xFFFF4D4D) : Colors.white)),
+                          Text(tr(suitNames[s]!), style: TextStyle(fontSize: 14, color: isRedSuit(s) ? const Color(0xFFFF4D4D) : Colors.white)),
                         ]),
                       ),
                   ]),
                 ),
                 if (v['majbur'] == true)
-                  const Padding(padding: EdgeInsets.only(top: 8), child: Text('6 مجبور', style: TextStyle(fontSize: 14, color: KoutColors.majbur))),
+                  Padding(padding: EdgeInsets.only(top: 8), child: Text(tr('6 مجبور'), style: TextStyle(fontSize: 14, color: KoutColors.majbur))),
               ])
-            : Text('${c.seatName(buyer!)} يختار الحكم...', style: const TextStyle(fontSize: 18, color: KoutColors.ink)),
+            : Text(trf('{0} يختار الحكم...', [c.seatName(buyer!)]), style: const TextStyle(fontSize: 18, color: KoutColors.ink)),
       );
     }
     if (v['bawanOffer'] == true) {
       return _ChromePanel(
         child: Column(mainAxisSize: MainAxisSize.min, children: [
-          const Text('مسؤول؟', style: TextStyle(fontSize: 24, color: KoutColors.ink)),
+          Text(tr('مسؤول؟'), style: TextStyle(fontSize: 24, color: KoutColors.ink)),
           const SizedBox(height: 12),
           Row(mainAxisSize: MainAxisSize.min, children: [
-            _ChromeButton(onTap: () => c.answerBawan(true), gold: true, child: const Text('باون', style: TextStyle(fontSize: 20, color: Colors.black))),
+            _ChromeButton(onTap: () => c.answerBawan(true), gold: true, child: Text(tr('باون'), style: TextStyle(fontSize: 20, color: Colors.black))),
             const SizedBox(width: 10),
-            _ChromeButton(onTap: () => c.answerBawan(false), child: const Text('لا', style: TextStyle(fontSize: 20, color: Colors.white))),
+            _ChromeButton(onTap: () => c.answerBawan(false), child: Text(tr('لا'), style: TextStyle(fontSize: 20, color: Colors.white))),
           ]),
         ]),
       );
     }
     if (phase == 'bawanOffer') {
-      return _ChromePanel(child: Text('${c.seatName(buyer!)} يفكر يعلن باون...', style: const TextStyle(fontSize: 18, color: KoutColors.ink)));
+      return _ChromePanel(child: Text(trf('{0} يفكر يعلن باون...', [c.seatName(buyer!)]), style: const TextStyle(fontSize: 18, color: KoutColors.ink)));
     }
     // النتيجة تطلع بعد ما تخلص آخر لمّة
     if ((phase == 'roundEnd' || phase == 'matchEnd') && _collecting == null) return _Panel(big: phase == 'matchEnd', child: _RoundResult(client: c, view: v));
@@ -1525,17 +1538,17 @@ List<Shadow>? _teamShadow(int t) => t == 0 ? null : _numShadow;
 String _roundLine(GameClient client, Map r, {bool report = false}) {
   final buyerName = r['buyer'] is int ? client.seatName(r['buyer'] as int) : '';
   final offender = r['offender'] is int ? client.seatName(r['offender'] as int) : '';
-  final majbur = r['majbur'] == true ? ' (مجبور)' : '';
+  final majbur = r['majbur'] == true ? tr(' (مجبور)') : '';
   return switch (r['type']) {
-    'made' when report => '$buyerName وصل ${r['points']}$majbur',
-    'failed' when report => '$buyerName خسر ${r['points']}$majbur',
-    'made' => '$buyerName جاب ${r['bid']}$majbur',
-    'failed' => '$buyerName ما جاب ${r['bid']}$majbur',
-    'greyPenalty' => '$offender خيّس الجوكر الصغير',
-    'bawanWin' => '$buyerName جاب باون: كل اللمّات!',
-    'bawanFail' => 'انقلب الباون',
-    'blueEarly' => '$offender رمى الجوكر الكبير قبل الصغير',
-    'blueStuck' => '$offender خيّس الجوكر الكبير',
+    'made' when report => trf('{0} وصل {1}{2}', [buyerName, r['points'], majbur]),
+    'failed' when report => trf('{0} خسر {1}{2}', [buyerName, r['points'], majbur]),
+    'made' => trf('{0} جاب {1}{2}', [buyerName, r['bid'], majbur]),
+    'failed' => trf('{0} ما جاب {1}{2}', [buyerName, r['bid'], majbur]),
+    'greyPenalty' => trf('{0} خيّس الجوكر الصغير', [offender]),
+    'bawanWin' => trf('{0} جاب باون: كل اللمّات!', [buyerName]),
+    'bawanFail' => tr('انقلب الباون'),
+    'blueEarly' => trf('{0} رمى الجوكر الكبير قبل الصغير', [offender]),
+    'blueStuck' => trf('{0} خيّس الجوكر الكبير', [offender]),
     _ => '',
   };
 }
@@ -1563,12 +1576,12 @@ void _showRounds(BuildContext context, GameClient c) {
             child: Padding(
               padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
               child: Column(mainAxisSize: MainAxisSize.min, children: [
-                const Text('نشرة الجولات', style: TextStyle(fontSize: 20, color: KoutColors.ink, fontWeight: FontWeight.w700)),
+                Text(tr('نشرة الجولات'), style: TextStyle(fontSize: 20, color: KoutColors.ink, fontWeight: FontWeight.w700)),
                 const SizedBox(height: 10),
                 if (rounds.isEmpty)
-                  const Padding(
+                  Padding(
                     padding: EdgeInsets.symmetric(vertical: 20),
-                    child: Text('ما خلصت أي جولة بعد', style: TextStyle(fontSize: 15, color: KoutColors.ink)),
+                    child: Text(tr('ما خلصت أي جولة بعد'), style: TextStyle(fontSize: 15, color: KoutColors.ink)),
                   )
                 else
                   Flexible(
@@ -1581,14 +1594,14 @@ void _showRounds(BuildContext context, GameClient c) {
                         final team = r['team'] as int;
                         final scores = (r['scores'] as List).cast<int>();
                         return Row(children: [
-                          SizedBox(width: 62, child: Text('الجولة ${r['round']}', style: const TextStyle(fontSize: 12, color: KoutColors.ink))),
+                          SizedBox(width: 62, child: Text(trf('الجولة {0}', [r['round']]), style: const TextStyle(fontSize: 12, color: KoutColors.ink))),
                           Expanded(
                             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                               Text(_roundLine(c, r, report: true), style: const TextStyle(fontSize: 15, color: KoutColors.ink)),
-                              Text('فريقك ${scores[myTeam]} · الخصم ${scores[1 - myTeam]}', style: const TextStyle(fontSize: 12, color: KoutColors.ink)),
+                              Text(trf('فريقك {0} · الخصم {1}', [scores[myTeam], scores[1 - myTeam]]), style: const TextStyle(fontSize: 12, color: KoutColors.ink)),
                             ]),
                           ),
-                          Text(r['points'] == null ? 'فوز' : '+${r['points']}', style: TextStyle(fontSize: 18, color: _teamInk(team), fontWeight: FontWeight.w700, shadows: _teamShadow(team))),
+                          Text(r['points'] == null ? tr('فوز') : '+${r['points']}', style: TextStyle(fontSize: 18, color: _teamInk(team), fontWeight: FontWeight.w700, shadows: _teamShadow(team))),
                         ]);
                       },
                     ),
@@ -1597,7 +1610,7 @@ void _showRounds(BuildContext context, GameClient c) {
                 Pressable(child: OutlinedButton.icon(
                   onPressed: withTap(() => Navigator.pop(ctx)),
                   icon: const Icon(Icons.arrow_back, size: 20),
-                  label: const Text('رجوع'),
+                  label: Text(tr('رجوع')),
                 )),
               ]),
             ),
@@ -1632,7 +1645,7 @@ class _Scores extends StatelessWidget {
     final goal = playing ? (buyer % 2 == 0 ? [need, _tricks - need + 1] : [_tricks - need + 1, need]) : [0, 0];
 
     Widget score(int t) => Column(mainAxisSize: MainAxisSize.min, children: [
-          Text(t == myTeam ? 'فريقك' : 'الخصم', style: TextStyle(fontSize: 9, color: _teamInk(t), height: 1.1, shadows: _teamShadow(t))),
+          Text(t == myTeam ? tr('فريقك') : tr('الخصم'), style: TextStyle(fontSize: 9, color: _teamInk(t), height: 1.1, shadows: _teamShadow(t))),
           Text('${scores[t]}', style: TextStyle(fontSize: 19, color: _teamInk(t), height: 1.05, shadows: _numShadow)),
         ]);
     Widget count(int t) => Text(playing ? '${won[t]}/${goal[t]}' : '', style: TextStyle(fontSize: 11, color: _teamInk(t), shadows: _numShadow));
@@ -1669,7 +1682,7 @@ class _Scores extends StatelessWidget {
             score(0),
             const SizedBox(width: 30),
             Column(mainAxisSize: MainAxisSize.min, children: [
-              const Text('من', style: TextStyle(fontSize: 9, color: KoutColors.ink, height: 1.1)),
+              Text(tr('من'), style: TextStyle(fontSize: 9, color: KoutColors.ink, height: 1.1)),
               Text('${v['winScore'] ?? 54}', style: const TextStyle(fontSize: 13, color: KoutColors.ink, height: 1.1, shadows: _numShadow)),
             ]),
             const SizedBox(width: 30),
@@ -1699,30 +1712,30 @@ class _TopActions extends StatelessWidget {
             valueListenable: Fullscreen.on,
             builder: (context, full, _) => Pressable(child: IconButton(
               icon: Icon(full ? Icons.fullscreen_exit : Icons.fullscreen, size: 26, color: Colors.white, shadows: const [Shadow(color: Colors.black, blurRadius: 4)]),
-              tooltip: full ? 'خروج من ملء الشاشة' : 'ملء الشاشة',
+              tooltip: full ? tr('خروج من ملء الشاشة') : tr('ملء الشاشة'),
               onPressed: withTap(Fullscreen.toggle),
             )),
           ),
         Pressable(child: IconButton(
           icon: const Icon(Icons.settings, size: 24, color: Colors.white, shadows: [Shadow(color: Colors.black, blurRadius: 4)]),
-          tooltip: 'الإعدادات',
+          tooltip: tr('الإعدادات'),
           onPressed: withTap(() => showSettings(context, client)),
         )),
         Pressable(child: IconButton(
           icon: const Icon(Icons.arrow_back, size: 24, color: Colors.white, shadows: [Shadow(color: Colors.black, blurRadius: 4)]),
-          tooltip: 'رجوع',
+          tooltip: tr('رجوع'),
           onPressed: withTap(() => showDialog(
             context: context,
             builder: (_) => Directionality(
-              textDirection: TextDirection.rtl,
+              textDirection: Lang.instance.en ? TextDirection.ltr : TextDirection.rtl,
               child: AlertDialog(
                 backgroundColor: const Color(0xFF111111),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: const BorderSide(color: Colors.white, width: 2)),
-                title: const Text('تطلع من اللعبة؟', style: TextStyle(fontSize: 30)),
-                content: const Text('مقعدك يبقى محجوز وتقدر ترجع بنفس الكود.', style: TextStyle(fontSize: 21)),
+                title: Text(tr('تطلع من اللعبة؟'), style: TextStyle(fontSize: 30)),
+                content: Text(tr('مقعدك يبقى محجوز وتقدر ترجع بنفس الكود.'), style: TextStyle(fontSize: 21)),
                 actions: [
-                  Pressable(child: TextButton(onPressed: withTap(() => Navigator.pop(context)), child: const Text('لا', style: TextStyle(color: Colors.white, fontSize: 22)))),
-                  Pressable(child: TextButton(onPressed: withTap(() { Navigator.pop(context); client.leave(); }), child: const Text('اطلع', style: TextStyle(color: Colors.white, fontSize: 22)))),
+                  Pressable(child: TextButton(onPressed: withTap(() => Navigator.pop(context)), child: Text(tr('لا'), style: TextStyle(color: Colors.white, fontSize: 22)))),
+                  Pressable(child: TextButton(onPressed: withTap(() { Navigator.pop(context); client.leave(); }), child: Text(tr('اطلع'), style: TextStyle(color: Colors.white, fontSize: 22)))),
                 ],
               ),
   )          ),
@@ -1766,7 +1779,7 @@ class _Seat extends StatelessWidget {
         SizedBox(width: size + 10, height: size + 10, child: _TurnRing(client: client, total: total)),
       Container(
         decoration: isTurn ? BoxDecoration(shape: BoxShape.circle, boxShadow: [BoxShadow(color: teamColor.withValues(alpha: 0.8), blurRadius: 14)]) : null,
-        child: CharacterAvatar(charId: info?['char'] as String?, size: size, ring: teamColor, background: teamColor, voice: voice),
+        child: CharacterAvatar(charId: info?['char'] as String?, size: size, ring: teamColor, background: teamColor, voice: voice, blink: true),
       ),
       if (isBot)
         Positioned(
@@ -1819,9 +1832,9 @@ class _Seat extends StatelessWidget {
 
     // كل الكتابة تحت الشخصية بحد أسود متصل
     final tags = <Widget>[
-      if (isBuyer && v['madmoon'] == true) const OutlinedText('مضمون', size: 13, color: KoutColors.madmoon),
-      if (isBuyer && v['majbur'] == true) const OutlinedText('مجبور', size: 13, color: KoutColors.majbur),
-      if (isKhabis && phase == 'bidding') const OutlinedText('الموزع', size: 11, color: Color(0xFFDDDDDD)),
+      if (isBuyer && v['madmoon'] == true) OutlinedText(tr('مضمون'), size: 13, color: KoutColors.madmoon),
+      if (isBuyer && v['majbur'] == true) OutlinedText(tr('مجبور'), size: 13, color: KoutColors.majbur),
+      if (isKhabis && phase == 'bidding') OutlinedText(tr('الموزع'), size: 11, color: Color(0xFFDDDDDD)),
       if (left != null && showSeconds)
         ValueListenableBuilder(
           valueListenable: seconds,
@@ -1833,7 +1846,7 @@ class _Seat extends StatelessWidget {
     ];
 
     // الاسم بلون فريقه
-    final name = OutlinedText(me ? 'أنت' : client.seatName(seat), size: 14, color: teamColor);
+    final name = OutlinedText(me ? tr('أنت') : client.seatName(seat), size: 14, color: teamColor);
     if (nameLeft) {
       // اللي فوق: الاسم على يسار الشخصية
       return Directionality(
@@ -1915,7 +1928,7 @@ class _PassSign extends StatelessWidget {
 }
 
 /// اسم المزايدة اللي يشوفه اللاعب
-String bidName(Object b) => switch (b) { 'pass' => 'طاف', 'majbur' => '6 مجبور', _ => '$b' };
+String bidName(Object b) => switch (b) { 'pass' => tr('طاف'), 'majbur' => tr('6 مجبور'), _ => '$b' };
 
 class _BidPanel extends StatelessWidget {
   final GameClient client;
@@ -1940,13 +1953,13 @@ class _BidPanel extends StatelessWidget {
 
     return Column(mainAxisSize: MainAxisSize.min, children: [
       Row(mainAxisSize: MainAxisSize.min, children: [
-        const Text('كم تروح؟', style: TextStyle(fontSize: 22, color: KoutColors.ink)),
+        Text(tr('كم تروح؟'), style: TextStyle(fontSize: 22, color: KoutColors.ink)),
         if (left != null) _Countdown(seconds: seconds),
       ]),
       if (legal.contains('majbur'))
-        const Padding(
+        Padding(
           padding: EdgeInsets.only(top: 2),
-          child: Text('محد زايد: «6 مجبور» إذا خسرت ياخذ الخصم 6 بس، وبدون باون',
+          child: Text(tr('محد زايد: «6 مجبور» إذا خسرت ياخذ الخصم 6 بس، وبدون باون'),
               textAlign: TextAlign.center, style: TextStyle(fontSize: 12, color: Color(0xFF2B2E33))),
         ),
       const SizedBox(height: 12),
@@ -1980,8 +1993,8 @@ class _BidPanel extends StatelessWidget {
       last[buyer] = i;
     }
   }
-  if (bawan != null) return (seat: bawan, points: points[bawan] ?? 0, bawan: 'جاب باون');
-  if (breaker != null) return (seat: breaker, points: points[breaker] ?? 0, bawan: 'قلب الباون');
+  if (bawan != null) return (seat: bawan, points: points[bawan] ?? 0, bawan: tr('جاب باون'));
+  if (breaker != null) return (seat: breaker, points: points[breaker] ?? 0, bawan: tr('قلب الباون'));
   if (points.isEmpty) return null;
   final seat = points.keys.reduce((a, b) {
     final c = points[a]!.compareTo(points[b]!);
@@ -2014,11 +2027,11 @@ class _RoundResult extends StatelessWidget {
 
     if (ended && winner != null) {
       final reason = switch (v['winReason']) {
-        'score' => 'وصل ${scores[winner]} نقطة',
-        'bawanWin' => 'باون: $buyerName جاب كل اللمّات',
-        'bawanFail' => 'انقلب الباون',
-        'blueEarly' => '$offender رمى الجوكر الكبير قبل الصغير',
-        'blueStuck' => '$offender خيّس الجوكر الكبير',
+        'score' => trf('وصل {0} نقطة', [scores[winner]]),
+        'bawanWin' => trf('باون: {0} جاب كل اللمّات', [buyerName]),
+        'bawanFail' => tr('انقلب الباون'),
+        'blueEarly' => trf('{0} رمى الجوكر الكبير قبل الصغير', [offender]),
+        'blueStuck' => trf('{0} خيّس الجوكر الكبير', [offender]),
         _ => '',
       };
       final reasonColor = v['winReason'] == 'bawanFail' ? KoutColors.lose : Colors.white;
@@ -2033,15 +2046,15 @@ class _RoundResult extends StatelessWidget {
             CharacterAvatar(charId: bestInfo?['char'] as String?, size: 46, ring: KoutColors.gold, background: KoutColors.team(best.seat % 2)),
             const SizedBox(width: 10),
             Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-              const Text('حديدة الدور', style: TextStyle(fontSize: 14, color: KoutColors.gold)),
+              Text(tr('حديدة الدور'), style: TextStyle(fontSize: 14, color: KoutColors.gold)),
               Text(client.seatName(best.seat), style: const TextStyle(fontSize: 20)),
-              Text(best.bawan ?? 'جاب ${best.points} نقطة', style: const TextStyle(fontSize: 13, color: Color(0xFFCCCCCC))),
+              Text(best.bawan ?? trf('جاب {0} نقطة', [best.points]), style: const TextStyle(fontSize: 13, color: Color(0xFFCCCCCC))),
             ]),
           ]),
           const SizedBox(height: 10),
         ],
-        Text('فاز الفريق ${KoutColors.teamName(winner)}', style: TextStyle(fontSize: 26, color: color)),
-        Text(winner == myTeam ? 'مبروك! فريقك فاز' : 'هاردلك، فريقك خسر', style: const TextStyle(fontSize: 16)),
+        Text(trf('فاز الفريق {0}', [KoutColors.teamName(winner)]), style: TextStyle(fontSize: 26, color: color)),
+        Text(winner == myTeam ? tr('مبروك! فريقك فاز') : tr('هاردلك، فريقك خسر'), style: const TextStyle(fontSize: 16)),
         const SizedBox(height: 12),
         FittedBox(
           child: Row(mainAxisSize: MainAxisSize.min, children: [
@@ -2051,8 +2064,16 @@ class _RoundResult extends StatelessWidget {
           ]),
         ),
         const SizedBox(height: 8),
-        const Text('سبب الفوز', style: TextStyle(fontSize: 13, color: Color(0xFFAAAAAA))),
+        Text(tr('سبب الفوز'), style: TextStyle(fontSize: 13, color: Color(0xFFAAAAAA))),
         Text(reason, textAlign: TextAlign.center, style: TextStyle(fontSize: 17, color: reasonColor)),
+        // مباراة بغوازي: العملات تطير (المحفظة تحسبها بعد ما توصل الحالة، فننتظرها)
+        ListenableBuilder(
+          listenable: Wallet.instance,
+          builder: (_, _) {
+            final r = Wallet.instance.matchResult;
+            return r == null ? const SizedBox.shrink() : Padding(padding: const EdgeInsets.only(top: 10), child: _StakeResult(won: r.won, amount: r.amount));
+          },
+        ),
         // نشرة الجولات مختصرة: سطر لكل جولة
         if (history.isNotEmpty) ...[
           const SizedBox(height: 10),
@@ -2076,9 +2097,9 @@ class _RoundResult extends StatelessWidget {
         ],
         const SizedBox(height: 14),
         if (client.isHost)
-          Pressable(child: FilledButton(onPressed: withTap(client.rematch), child: const Text('مباراة جديدة', style: TextStyle(fontSize: 17))))
+          Pressable(child: FilledButton(onPressed: withTap(client.rematch), child: Text(tr('مباراة جديدة'), style: TextStyle(fontSize: 17))))
         else
-          const Text('بانتظار المضيف...', style: TextStyle(color: Color(0xFFAAAAAA))),
+          Text(tr('بانتظار المضيف...'), style: TextStyle(color: Color(0xFFAAAAAA))),
       ]);
     }
 
@@ -2087,10 +2108,65 @@ class _RoundResult extends StatelessWidget {
       Icon(good ? Icons.check_circle : Icons.cancel, size: 40, color: good ? KoutColors.win : KoutColors.lose),
       const SizedBox(height: 6),
       Text(text, textAlign: TextAlign.center, style: const TextStyle(fontSize: 18)),
-      if (pts != null) Text('+$pts للفريق ${KoutColors.teamName(team)}', style: TextStyle(fontSize: 20, color: KoutColors.team(team))),
+      if (pts != null) Text(trf('+{0} للفريق {1}', [pts, KoutColors.teamName(team)]), style: TextStyle(fontSize: 20, color: KoutColors.team(team))),
       const SizedBox(height: 8),
-      const Text('الجولة الجاية تبدأ بعد شوي...', style: TextStyle(color: Color(0xFFAAAAAA), fontSize: 13)),
+      Text(tr('الجولة الجاية تبدأ بعد شوي...'), style: TextStyle(color: Color(0xFFAAAAAA), fontSize: 13)),
     ]);
+  }
+}
+
+/// غوازي المباراة: كومة فيها المبلغ وجنبها «غوازيك». الفوز: العملات تطير من الكومة للرصيد ويعدّ لفوق،
+/// الخسارة: تطير من الرصيد للكومة («راحت»). الرصيد يبين قبل التغيير لين توصل العملات
+class _StakeResult extends StatefulWidget {
+  final bool won;
+  final int amount;
+  const _StakeResult({required this.won, required this.amount});
+
+  @override
+  State<_StakeResult> createState() => _StakeResultState();
+}
+
+class _StakeResultState extends State<_StakeResult> {
+  final _pileKey = GlobalKey(), _chipKey = GlobalKey();
+  late int? _shown = widget.won ? Wallet.instance.balance - widget.amount : Wallet.instance.balance + widget.amount;
+
+  @override
+  void initState() {
+    super.initState();
+    // بعد ما تختفي كلمة النتيجة الكبيرة (وصول/خسارة، 2.2 ثانية) نطيّر العملات عشان تبين
+    Future.delayed(const Duration(milliseconds: 2400), () {
+      if (!mounted) return;
+      flyCoins(context,
+          from: widget.won ? _pileKey : _chipKey,
+          to: widget.won ? _chipKey : _pileKey,
+          onLand: () {
+            if (mounted) setState(() => _shown = null);
+          },
+          onDone: () => Wallet.instance.matchResult = null);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final color = widget.won ? const Color(0xFF6FD68A) : KoutColors.lose;
+    // يصغر لو اللوحة ضيقة (جوالات صغيرة)
+    return FittedBox(fit: BoxFit.scaleDown, child: Row(mainAxisSize: MainAxisSize.min, children: [
+      Column(key: _pileKey, mainAxisSize: MainAxisSize.min, children: [
+        const GhawaziIcon(size: 30),
+        Text(widget.won ? '+${widget.amount}' : '-${widget.amount}', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: color)),
+        Text(widget.won ? tr('ربحك') : tr('راحت'), style: const TextStyle(fontSize: 12, color: Color(0xFFAAAAAA))),
+      ]),
+      const SizedBox(width: 18),
+      ListenableBuilder(
+        listenable: Wallet.instance,
+        builder: (_, _) => Container(
+          key: _chipKey,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(color: const Color(0xFF111111), borderRadius: BorderRadius.circular(22), border: Border.all(color: Colors.white, width: 2)),
+          child: GhawaziAmount(_shown ?? Wallet.instance.balance, size: 17, label: true),
+        ),
+      ),
+    ]));
   }
 }
 
@@ -2102,7 +2178,7 @@ class _Effect extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = switch (kind) { 'win' => KoutColors.win, 'bawan' => KoutColors.gold, _ => KoutColors.lose };
-    final word = switch (kind) { 'win' => 'وصول', 'bawan' => 'باون', 'bawanFail' => 'انقلب الباون', _ => 'خسارة' };
+    final word = switch (kind) { 'win' => tr('وصول'), 'bawan' => tr('باون'), 'bawanFail' => tr('انقلب الباون'), _ => tr('خسارة') };
     return TweenAnimationBuilder<double>(
       tween: Tween(begin: 0, end: 1),
       duration: Duration(milliseconds: kind == 'bawan' ? 3400 : 2100),

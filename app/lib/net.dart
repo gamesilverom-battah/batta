@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+import 'i18n.dart';
 import 'friends.dart';
 import 'progress.dart';
 import 'wallet.dart';
@@ -53,7 +54,6 @@ class GameClient extends ChangeNotifier {
   bool get isHost => room?['isHost'] == true;
   bool get started => room?['started'] == true;
   bool get searching => room?['search'] == true;
-  bool get practicing => room?['practice'] == true;
   DateTime? searchEnds; // متى يخلص البحث وتكمّل البوتات
   int get mode => (room?['mode'] as int?) ?? 6;
   List get seats => (room?['seats'] as List?) ?? const [];
@@ -62,7 +62,7 @@ class GameClient extends ChangeNotifier {
 
   String seatName(int seat) {
     final s = seatInfo(seat);
-    return s == null ? 'فاضي' : s['name'] as String;
+    return s == null ? tr('فاضي') : s['name'] as String;
   }
 
   /// الثواني الباقية للاعب اللي عليه الدور
@@ -87,11 +87,13 @@ class GameClient extends ChangeNotifier {
     char = p.getString('char');
     // شخصية مقفلة (ما انشرت): ما تنستخدم
     if (char != null && !Wallet.instance.owns('char', char!)) char = null;
-    intro = p.getBool('intro') ?? true;
-    // على الويب السيرفر دايماً هو نفس الموقع. وعلى الجوال نستخدم رابط النسخة، إلا إذا اللاعب كتب رابط ثاني بنفسه
-    // (المفتاح القديم 'server' ما نقرأه: نسخ قديمة حفظت فيه روابط غلط وكانت تمنع الاتصال)
-    serverUrl = kIsWeb ? defaultServerUrl() : (p.getString('serverCustom') ?? defaultServerUrl());
+    // أنميشن الشعار دايماً يطلع (انشال إعداده)
+    intro = true;
+    nameChangesUsed = p.getInt('nameChanges') ?? 0;
+    // السيرفر دايماً سيرفر اللعبة (انشال إعداده، فرابط قديم محفوظ ما يعلّق اللاعب)
+    serverUrl = defaultServerUrl();
     await p.remove('server');
+    await p.remove('serverCustom');
   }
 
   static String defaultServerUrl() {
@@ -123,7 +125,24 @@ class GameClient extends ChangeNotifier {
     }
   }
 
-  /// اسم اللاعب (مثل الحساب): ينكتب أول مرة وينحفظ، ويتغير من التفضيلات
+  /// تغيير الاسم: أول مرة (شاشة الاسم) مجاني، وبعدها مرتين مجاناً، والباقي بـ 1$ (قريباً مع الشراء الحقيقي)
+  static const freeNameChanges = 2;
+  int nameChangesUsed = 0;
+  int get freeNameChangesLeft => (freeNameChanges - nameChangesUsed).clamp(0, freeNameChanges);
+
+  /// تغيير اسم (من الإعدادات أو التفضيلات): يحسب من التغييرات المجانية. يرجّع false إذا خلصت
+  Future<bool> changeName(String value) async {
+    final v = value.trim();
+    if (v.isEmpty || v == name) return false;
+    if (freeNameChangesLeft <= 0) return false;
+    nameChangesUsed++;
+    final p = await SharedPreferences.getInstance();
+    await p.setInt('nameChanges', nameChangesUsed);
+    await saveName(v);
+    return true;
+  }
+
+  /// اسم اللاعب (مثل الحساب): ينكتب أول مرة وينحفظ
   Future<void> saveName(String value) async {
     name = value.trim();
     startFriends();
@@ -138,21 +157,27 @@ class GameClient extends ChangeNotifier {
   Future<void> createRoom() async {
     Wallet.instance.roomStake = null;
     await _savePrefs();
-    _open(() => _send({'t': 'create', 'name': name, 'char': ?char, 'fc': Friends.instance.myCode}));
+    _open(() => _send({'t': 'create', 'name': name, 'char': ?char, 'fc': Friends.instance.myCode, 'profile': Progress.instance.publicProfile()}));
   }
 
   /// بحث عن لاعبين: mode 6 أو 4، و score هدف المباراة 54 أو 34
+  /// «مع إشارة ميدان» (true) أو «بدون إشارة» (false): للبحث والتدريب
+  bool signalsOn = true;
+
+  /// الغرفة الحالية فيها إشارات؟
+  bool get roomSignals => room?['signals'] != false;
+
   Future<void> search(int mode, int score) async {
     Wallet.instance.enterSearch();
     await _savePrefs();
-    _open(() => _send({'t': 'search', 'mode': mode, 'score': score, 'name': name, 'char': ?char, 'fc': Friends.instance.myCode}));
+    _open(() => _send({'t': 'search', 'mode': mode, 'score': score, 'signals': signalsOn, 'name': name, 'char': ?char, 'fc': Friends.instance.myCode, 'profile': Progress.instance.publicProfile()}));
   }
 
   /// تدريب مع البوتات بدون وقت
   Future<void> practice(int mode) async {
     Wallet.instance.roomStake = null;
     await _savePrefs();
-    _open(() => _send({'t': 'practice', 'mode': mode, 'name': name, 'char': ?char, 'fc': Friends.instance.myCode}));
+    _open(() => _send({'t': 'practice', 'mode': mode, 'signals': signalsOn, 'name': name, 'char': ?char, 'fc': Friends.instance.myCode, 'profile': Progress.instance.publicProfile()}));
   }
 
   Future<void> joinRoom(String roomCode) async {
@@ -161,7 +186,7 @@ class GameClient extends ChangeNotifier {
     final p = await SharedPreferences.getInstance();
     // لو نفس الغرفة اللي كنا فيها، نرجع لمقعدنا
     final savedToken = p.getString('room') == roomCode ? p.getString('token') : null;
-    _open(() => _send({'t': 'join', 'code': roomCode, 'name': name, 'token': ?savedToken, 'char': ?char, 'fc': Friends.instance.myCode}));
+    _open(() => _send({'t': 'join', 'code': roomCode, 'name': name, 'token': ?savedToken, 'char': ?char, 'fc': Friends.instance.myCode, 'profile': Progress.instance.publicProfile()}));
   }
 
   /// يحاول يتصل لين دقيقة ونص: سيرفر Render المجاني ينام إذا ما أحد يلعب، ويحتاج 30-60 ثانية يصحى
@@ -180,7 +205,7 @@ class GameClient extends ChangeNotifier {
       ch = WebSocketChannel.connect(Uri.parse(serverUrl));
     } catch (e) {
       connecting = false;
-      error = 'رابط السيرفر غير صحيح';
+      error = tr('رابط السيرفر غير صحيح');
       notifyListeners();
       return;
     }
@@ -201,7 +226,7 @@ class GameClient extends ChangeNotifier {
         });
       } else {
         connecting = false;
-        error = 'ما قدرت أتصل بالسيرفر، تأكد من الإنترنت وحاول مرة ثانية';
+        error = tr('ما قدرت أتصل بالسيرفر، تأكد من الإنترنت وحاول مرة ثانية');
         notifyListeners();
       }
     });
@@ -215,7 +240,7 @@ class GameClient extends ChangeNotifier {
       // إعادة الاتصال تلقائياً لنفس المقعد
       Future.delayed(const Duration(seconds: 2), () {
         if (!_wantConnection || connected) return;
-        _open(() => _send({'t': 'join', 'code': code, 'token': token, 'name': name, 'fc': Friends.instance.myCode}));
+        _open(() => _send({'t': 'join', 'code': code, 'token': token, 'name': name, 'fc': Friends.instance.myCode, 'profile': Progress.instance.publicProfile()}));
       });
     }
   }
@@ -343,6 +368,7 @@ class GameClient extends ChangeNotifier {
   void kick(int seat) => _send({'t': 'kick', 'seat': seat});
   void start() => _send({'t': 'start'});
   void setMode(int mode) => _send({'t': 'mode', 'mode': mode});
+  void setSignals(bool on) => _send({'t': 'signals', 'on': on});
   void rematch() => _send({'t': 'rematch'});
 
   // أوامر اللعب

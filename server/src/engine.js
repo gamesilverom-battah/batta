@@ -78,11 +78,13 @@ function power(card) {
   return rankOf(card);
 }
 
-function createMatch({ rng = Math.random, khabis, players = PLAYERS, winScore = WIN_SCORE } = {}) {
+// signals: «مع إشارة ميدان» (الافتراضي). false = «بدون إشارة»: ما فيه إشارات أبد باللعبة
+function createMatch({ rng = Math.random, khabis, players = PLAYERS, winScore = WIN_SCORE, signals = true } = {}) {
   if (!MODES.includes(players)) throw new Error('عدد لاعبين غير مدعوم');
   const state = {
     players,
     winScore,
+    signals,
     phase: 'bidding',
     scores: [0, 0],
     khabis: khabis ?? Math.floor(rng() * players),
@@ -331,6 +333,7 @@ const isBuyerMate = (state, seat) => state.buyer != null && seat !== state.buyer
 // إشارة الجوكر: لزملاء الشاري بس، ولازم يكون عندك جوكر، وحامل الكبير بس ما يستخدمها لين ينزل الصغير.
 // اللي معه الجوكرين يقدر (وتتحدد بورقته الجاية)
 function canSignalJoker(state, seat) {
+  if (state.signals === false) return false;
   if (!isBuyerMate(state, seat)) return false;
   const hand = state.hands[seat] || [];
   if (!hand.some(isJoker)) return false;
@@ -339,6 +342,7 @@ function canSignalJoker(state, seat) {
 }
 
 function canSignal(state, seat) {
+  if (state.signals === false) return false; // بدون إشارة ميدان
   return state.phase === 'playing' && state.turn === seat && state.signalsThisTurn < MAX_SIGNALS_PER_TURN;
 }
 
@@ -396,6 +400,7 @@ function viewFor(state, seat) {
     legalCards: legalCards(state, seat),
     // هل رمي الكبير الحين يخسّر المباراة (عشان التطبيق ينبّه اللاعب)
     blueLoses: state.phase === 'playing' && blueLosesMatch(state, seat),
+    signals: state.signals !== false, // التطبيق يخفي الإشارات كلها لو false
     canSignal: canSignal(state, seat),
     canSignalJoker: canSignalJoker(state, seat),
     hasJoker: isBuyerMate(state, seat) && (state.hands[seat] || []).some(isJoker), // زر إشارة الجوكر يطلع لزملاء الشاري بس
@@ -405,7 +410,6 @@ function viewFor(state, seat) {
 
 // الترتيب من اليسار: هاس، كلفس، ديمن، سبيت (الأعلى أول)، وبعدها الجوكرين.
 // إذا نوع ناقص نعيد الترتيب عشان يبقى أحمر ثم أسود ثم أحمر (لين ما يصير ممكن)
-const HAND_ORDER = ['H', 'C', 'D', 'S'];
 const RED = ['H', 'D'];
 const BLACK = ['C', 'S'];
 function suitSequence(hand) {

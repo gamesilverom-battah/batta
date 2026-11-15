@@ -44,7 +44,7 @@ Map<String, dynamic> _biddingView() => _view()
   ..['bids'] = [{'seat': 1, 'bid': 'pass'}, {'seat': 2, 'bid': 7}, {'seat': 3, 'bid': 'pass'}, {'seat': 4, 'bid': 'pass'}, {'seat': 5, 'bid': 'pass'}];
 
 /// result: 'made' أو 'failed' يصوّر لحظة نهاية الجولة (الطاولة خضراء/حمراء)
-Future<void> _capture(WidgetTester tester, Size size, String out, {String? result, bool bidding = false, bool signals = false}) async {
+Future<void> _capture(WidgetTester tester, Size size, String out, {String? result, bool bidding = false, bool signals = false, String? throwCard, ({bool won, int amount})? stake, bool noSignals = false}) async {
   tester.view.physicalSize = size * 2;
   tester.view.devicePixelRatio = 2;
   final c = _Client()
@@ -56,7 +56,7 @@ Future<void> _capture(WidgetTester tester, Size size, String out, {String? resul
           {'name': n, 'bot': n != 'مهند', 'connected': true, 'char': ch},
       ],
     }
-    ..view = bidding ? _biddingView() : _view();
+    ..view = ((bidding ? _biddingView() : _view())..['signals'] = !noSignals);
   if (signals) {
     const sent = [['H'], ['S', 'D'], ['C'], ['D', 'H', 'S'], ['J'], ['S']];
     for (var s = 0; s < 6; s++) {
@@ -75,6 +75,36 @@ Future<void> _capture(WidgetTester tester, Size size, String out, {String? resul
     await precacheImage(matImage, ctx);
   });
   await tester.pump(const Duration(milliseconds: 600));
+  // لمستين على ورقة: تنرمى، ونصوّرها وهي طالعة من مكانها باليد
+  if (throwCard != null) {
+    // الجزء الظاهر من الورقة (يسارها): الوسط تغطيه الورقة اللي بعدها
+    Offset visible() => tester.getTopLeft(find.byKey(ValueKey('hand-$throwCard'))) + const Offset(12, 40);
+    await tester.tapAt(visible());
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.tapAt(visible());
+    await tester.pump(const Duration(milliseconds: 16));
+    await tester.pump(const Duration(milliseconds: 60));
+  }
+  // نهاية مباراة بغوازي: لقطة والعملات طايرة بين الكومة و«غوازيك»
+  if (stake != null) {
+    Wallet.instance.balance = stake.won ? 1270 : 840;
+    c.view = _view()
+      ..['phase'] = 'matchEnd'
+      ..['trick'] = []
+      ..['legalCards'] = []
+      ..['canSignal'] = false
+      ..['winner'] = stake.won ? 0 : 1
+      ..['winReason'] = 'score'
+      ..['scores'] = stake.won ? [54, 31] : [31, 54]
+      ..['lastRound'] = {'type': 'made', 'team': stake.won ? 0 : 1, 'points': 7, 'buyer': stake.won ? 0 : 1, 'bid': 7, 'majbur': false, 'tricksWon': [7, 2]};
+    c.notifyListeners();
+    await tester.pump(const Duration(milliseconds: 16));
+    Wallet.instance.matchResult = stake;
+    Wallet.instance.notifyListeners();
+    for (var i = 0; i < 34; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+  }
   if (result != null) {
     c.view = _view()
       ..['phase'] = 'roundEnd'
@@ -117,6 +147,27 @@ void main() {
   testWidgets('landscape preview', (tester) async {
     addTearDown(tester.view.reset);
     await _capture(tester, const Size(844, 390), 'build/preview_landscape.png');
+  });
+
+  testWidgets('my card leaves from the hand', (tester) async {
+    addTearDown(tester.view.reset);
+    await _capture(tester, const Size(390, 844), 'build/preview_throw_portrait.png', throwCard: 'C-3');
+    await _capture(tester, const Size(844, 390), 'build/preview_throw_landscape.png', throwCard: 'C-3');
+  });
+
+  testWidgets('match end coins', (tester) async {
+    addTearDown(tester.view.reset);
+    await _capture(tester, const Size(390, 844), 'build/preview_stake_win.png', stake: (won: true, amount: 272));
+    await _capture(tester, const Size(390, 844), 'build/preview_stake_lose.png', stake: (won: false, amount: 160));
+    for (var i = 0; i < 30; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+  });
+
+  testWidgets('no signals game', (tester) async {
+    addTearDown(tester.view.reset);
+    await _capture(tester, const Size(390, 844), 'build/preview_nosignals_portrait.png', noSignals: true);
+    await _capture(tester, const Size(844, 390), 'build/preview_nosignals_landscape.png', noSignals: true);
   });
 
   testWidgets('pass sign', (tester) async {

@@ -4,6 +4,7 @@ import 'package:kout/avatars.dart';
 import 'package:kout/cards.dart';
 import 'package:kout/main.dart';
 import 'package:kout/net.dart';
+import 'package:kout/wallet.dart';
 import 'package:kout/sounds.dart';
 
 /// عميل وهمي: ما يتصل بسيرفر، بس يسجّل الأوامر.
@@ -195,7 +196,7 @@ void main() {
     await tester.pump(const Duration(seconds: 3));
   });
 
-  testWidgets('bawan win or bawan fail: the winning team says 6; match win: the winning team says 5', (tester) async {
+  testWidgets('bawan win, bawan fail or a big joker loss: the winning team says 6; match win: the winning team says 5', (tester) async {
     tester.view.physicalSize = const Size(400, 860);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
@@ -231,6 +232,12 @@ void main() {
     Sfx.voiceLog.clear();
     await result(4, 'made', team: 0, winner: 0); // فوز بالمباراة: كل الفريق الفايز 5
     expect(Sfx.voiceLog, ['musabbah_5', 'marhoon_5']);
+    Sfx.voiceLog.clear();
+    await result(5, 'blueEarly', team: 1, winner: 1); // الجوكر الكبير قبل الصغير: مثل الباون، الفريق الفايز 6
+    expect(Sfx.voiceLog, ['khusaib_6']);
+    Sfx.voiceLog.clear();
+    await result(6, 'blueStuck', team: 0, winner: 0); // بقى معه الجوكر الكبير بس وعليه الافتتاح: نفس الشي
+    expect(Sfx.voiceLog, ['musabbah_6', 'marhoon_6']);
     await tester.pump(const Duration(seconds: 4));
   });
 
@@ -281,8 +288,18 @@ void main() {
     expect(find.text('من 34 نقطة'), findsNothing);
     await tester.tap(find.text('6 لاعبين'));
     await tester.pump();
+    // صفحة وحدة فيها كل الأطوار: نوع الدور والإشارات والمبلغ، وزر البحث
+    expect(find.text('مع إشارة ميدان'), findsOneWidget);
+    expect(find.text('بدون إشارة'), findsOneWidget);
     expect(find.text('من 54 نقطة'), findsOneWidget);
     expect(find.text('من 34 نقطة'), findsOneWidget);
+    expect(find.text('ابحث'), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.tap(find.text('بدون إشارة'));
+    await tester.pump();
+    final home = tester.widget<KoutApp>(find.byType(KoutApp));
+    expect(home.client.signalsOn, false);
+    await tester.pump(const Duration(milliseconds: 300));
     await tester.tap(find.byIcon(Icons.arrow_back));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300)); // انتقال الصفحة
@@ -550,7 +567,16 @@ void main() {
     expect(find.text('سبب الفوز'), findsOneWidget);
     expect(find.text('باون: خصيب جاب كل اللمّات'), findsOneWidget);
     expect(find.text('مباراة جديدة'), findsOneWidget);
-    await tester.pump(const Duration(seconds: 4));
+    // مباراة بغوازي: ربحك والرصيد بشاشة النتيجة، والعملات تطير
+    Wallet.instance.matchResult = (won: true, amount: 272);
+    Wallet.instance.notifyListeners();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.text('+272'), findsOneWidget);
+    expect(find.text('ربحك'), findsOneWidget);
+    for (var i = 0; i < 50; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(Wallet.instance.matchResult, isNull); // بعد ما خلص الأنيميشن
   });
 
   testWidgets('signals: pick several (and joker), send once, shown together', (tester) async {

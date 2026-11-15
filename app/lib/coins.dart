@@ -1,14 +1,19 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
 
-import 'menus.dart' show Bob;
+import 'menus.dart' show Bob, Pressable;
+import 'i18n.dart';
 import 'sounds.dart';
 import 'wallet.dart';
 
+/// عدد العملات اللي تطير (صوت العملات مسوّى على نفس العدد: tools/gen-coins.js)
+const coinCount = 10;
+
 /// عملات غوازي تطير من مكان لمكان (من الهدية للرصيد، أو من الرصيد للجيم) مع صوت العملات.
 /// onLand: أول ما توصل أول عملة (نحدّث الرصيد وقتها عشان الرقم يعدّ مع وصولها)
-void flyCoins(BuildContext context, {required GlobalKey from, required GlobalKey to, int count = 9, VoidCallback? onLand, VoidCallback? onDone}) {
+void flyCoins(BuildContext context, {required GlobalKey from, required GlobalKey to, int count = coinCount, VoidCallback? onLand, VoidCallback? onDone}) {
   final overlay = Overlay.maybeOf(context);
   final box = overlay?.context.findRenderObject() as RenderBox?;
   Rect? rectOf(GlobalKey k) {
@@ -23,7 +28,6 @@ void flyCoins(BuildContext context, {required GlobalKey from, required GlobalKey
     onDone?.call();
     return;
   }
-  Sfx.coins();
   late final OverlayEntry entry;
   entry = OverlayEntry(
     builder: (_) => _CoinFlight(
@@ -52,7 +56,10 @@ class _CoinFlight extends StatefulWidget {
 }
 
 class _CoinFlightState extends State<_CoinFlight> with SingleTickerProviderStateMixin {
-  static const _ms = 900, _fly = 0.55, _gap = 0.05; // كل عملة تطير 55% من الوقت، وورا بعض بفرق 5%
+  // الطيران كله 1.6 ثانية: كل عملة تطير 40% منه (640ms)، والعملات ورا بعض بالتساوي لين آخر الوقت.
+  // بفرق 103ms بين العملات (10 عملات)، وصوت العملات نفس الإيقاع: كل رنّة لحظة ما توصل عملة
+  static const _ms = 1600, _fly = 0.4;
+  late final double _gap = (1 - _fly - 0.02) / max(1, widget.count - 1);
   late final AnimationController _t = AnimationController(vsync: this, duration: const Duration(milliseconds: _ms));
   final _rnd = Random(3);
   late final List<Offset> _spread = [for (var i = 0; i < widget.count; i++) Offset(_rnd.nextDouble() * 36 - 18, _rnd.nextDouble() * 20 - 10)];
@@ -64,6 +71,7 @@ class _CoinFlightState extends State<_CoinFlight> with SingleTickerProviderState
     _t.addListener(() {
       if (!_landed && _t.value >= _fly) {
         _landed = true;
+        Sfx.coins(); // الصوت يبدأ مع وصول أول عملة
         widget.onLand?.call();
       }
     });
@@ -107,44 +115,190 @@ class _CoinFlightState extends State<_CoinFlight> with SingleTickerProviderState
       );
 }
 
-/// خانة هدية اليوم تحت الرصيد: تلمع وتنط لين يضغطها اللاعب، وبعدها تقول متى الجاية
-class GiftBox extends StatelessWidget {
+String _after(Duration d) => d.inHours >= 1 ? trf('بعد {0} ساعة', [d.inHours]) : trf('بعد {0} دقيقة', [max(1, d.inMinutes)]);
+
+/// خانة هدية اليوم تحت الرصيد: تلمع وتنط لين يضغطها اللاعب، وبعدها تقول متى الجاية (24 ساعة من استلامه).
+/// كل 30 ثانية وهي ظاهرة تحدّث الوقت الباقي، وتفتح الهدية لو خلص
+class GiftBox extends StatefulWidget {
   final VoidCallback onTap;
   const GiftBox({super.key, required this.onTap});
+
+  @override
+  State<GiftBox> createState() => _GiftBoxState();
+}
+
+class _GiftBoxState extends State<GiftBox> {
+  late final Timer _clock = Timer.periodic(const Duration(seconds: 30), (_) {
+    Wallet.instance.checkGift();
+    if (mounted) setState(() {});
+  });
+
+  @override
+  void initState() {
+    super.initState();
+    _clock;
+  }
+
+  @override
+  void dispose() {
+    _clock.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
         listenable: Wallet.instance,
         builder: (_, _) {
           final ready = Wallet.instance.giftReady;
-          final left = Wallet.untilNextGift(DateTime.now());
-          final when = left.inHours >= 1 ? 'بعد ${left.inHours} ساعة' : 'بعد ${max(1, left.inMinutes)} دقيقة';
+          final when = _after(Wallet.instance.untilNextGift());
           return GestureDetector(
-            onTap: ready ? onTap : null,
+            onTap: ready ? widget.onTap : null,
             child: Container(
-              padding: const EdgeInsets.fromLTRB(10, 5, 10, 5),
+              padding: const EdgeInsets.fromLTRB(8, 4, 8, 4),
               decoration: BoxDecoration(
                 color: ready ? const Color(0xFF2A1F05) : const Color(0xFF111111),
-                borderRadius: BorderRadius.circular(16),
+                borderRadius: BorderRadius.circular(14),
                 border: Border.all(color: ready ? const Color(0xFFFFD65A) : const Color(0xFF8A8D92), width: 2),
                 boxShadow: ready ? const [BoxShadow(color: Color(0x99FFD65A), blurRadius: 12)] : null,
               ),
               child: Row(mainAxisSize: MainAxisSize.min, children: [
-                Bob(phase: 0.1, lift: ready ? 3 : 0, child: Icon(Icons.card_giftcard, size: 22, color: ready ? const Color(0xFFFFD65A) : const Color(0xFF8A8D92))),
+                Bob(phase: 0.1, lift: ready ? 3 : 0, child: Icon(Icons.card_giftcard, size: 19, color: ready ? const Color(0xFFFFD65A) : const Color(0xFF8A8D92))),
                 const SizedBox(width: 6),
                 Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text(ready ? 'هدية اليوم' : 'هدية بكرة', style: TextStyle(fontFamily: 'ElMessiri', fontSize: 13, height: 1.2, fontWeight: FontWeight.w700, color: ready ? Colors.white : const Color(0xFFAAAAAA))),
+                  Text(ready ? tr('هدية اليوم') : tr('الهدية الجاية'), style: TextStyle(fontFamily: 'ElMessiri', fontSize: 11.5, height: 1.15, fontWeight: FontWeight.w700, color: ready ? Colors.white : const Color(0xFFAAAAAA))),
                   ready
-                      ? const Row(mainAxisSize: MainAxisSize.min, children: [
-                          GhawaziIcon(size: 13),
+                      ? Row(mainAxisSize: MainAxisSize.min, children: [
+                          GhawaziIcon(size: 11.5),
                           SizedBox(width: 3),
-                          Text('+${Wallet.dailyGift} استلمها', style: TextStyle(fontFamily: 'ElMessiri', fontSize: 12, height: 1.2, color: Color(0xFFFFD65A))),
+                          Text(trf('+{0} استلمها', [Wallet.dailyGift]), style: TextStyle(fontFamily: 'ElMessiri', fontSize: 10.5, height: 1.15, color: Color(0xFFFFD65A))),
                         ])
-                      : Text(when, style: const TextStyle(fontFamily: 'ElMessiri', fontSize: 12, height: 1.2, color: Color(0xFFAAAAAA))),
+                      : Text(when, style: const TextStyle(fontFamily: 'ElMessiri', fontSize: 10.5, height: 1.15, color: Color(0xFFAAAAAA))),
                 ]),
               ]),
             ),
           );
         },
+      );
+}
+
+/// خانة «شاهد إعلان» تحت الهدية: إعلان كامل = غوازي (${Wallet.adReward})، لين ${Wallet.adsPerDay} إعلانات بكل 24 ساعة
+class AdBox extends StatelessWidget {
+  final VoidCallback onTap;
+  const AdBox({super.key, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) => ListenableBuilder(
+        listenable: Wallet.instance,
+        builder: (_, _) {
+          final w = Wallet.instance;
+          final left = w.adsLeft();
+          final ready = left > 0;
+          return GestureDetector(
+            onTap: ready ? onTap : null,
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(8, 4, 8, 4),
+              decoration: BoxDecoration(
+                color: const Color(0xFF111111),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: ready ? Colors.white : const Color(0xFF8A8D92), width: 2),
+              ),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Bob(phase: 0.6, lift: ready ? 2.5 : 0, child: Icon(Icons.smart_display, size: 18, color: ready ? Colors.white : const Color(0xFF8A8D92))),
+                const SizedBox(width: 6),
+                Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(tr('شاهد إعلان'), style: TextStyle(fontFamily: 'ElMessiri', fontSize: 11.5, height: 1.15, fontWeight: FontWeight.w700, color: ready ? Colors.white : const Color(0xFFAAAAAA))),
+                  ready
+                      ? Row(mainAxisSize: MainAxisSize.min, children: [
+                          const GhawaziIcon(size: 11.5),
+                          const SizedBox(width: 3),
+                          Text(trf('+{0}  (باقي {1})', [Wallet.adReward, left]), style: const TextStyle(fontFamily: 'ElMessiri', fontSize: 10.5, height: 1.15, color: Color(0xFFFFE08A))),
+                        ])
+                      : Text(_after(w.untilNextAd()), style: const TextStyle(fontFamily: 'ElMessiri', fontSize: 10.5, height: 1.15, color: Color(0xFFAAAAAA))),
+                ]),
+              ]),
+            ),
+          );
+        },
+      );
+}
+
+/// شاشة الإعلان. الحين إعلان تجريبي (عدّاد) لين نربط شبكة إعلانات حقيقية مع نشر التطبيق بالمتاجر (مثل AdMob).
+/// يرجّع true إذا خلص الإعلان كامل (الجايزة بس لما يكمل)
+Future<bool> showAd(BuildContext context, {int seconds = 15}) async {
+  final done = await showDialog<bool>(
+    context: context,
+    barrierDismissible: false,
+    builder: (_) => _AdDialog(seconds: seconds),
+  );
+  return done == true;
+}
+
+class _AdDialog extends StatefulWidget {
+  final int seconds;
+  const _AdDialog({required this.seconds});
+
+  @override
+  State<_AdDialog> createState() => _AdDialogState();
+}
+
+class _AdDialogState extends State<_AdDialog> {
+  late int _left = widget.seconds;
+  late final Timer _timer = Timer.periodic(const Duration(seconds: 1), (t) {
+    if (!mounted) return;
+    setState(() => _left--);
+    if (_left <= 0) t.cancel();
+  });
+
+  @override
+  void initState() {
+    super.initState();
+    _timer;
+  }
+
+  @override
+  void dispose() {
+    _timer.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Dialog(
+        backgroundColor: const Color(0xFF1B1C1F),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: const BorderSide(color: Colors.white, width: 2)),
+        child: Padding(
+          padding: const EdgeInsets.all(18),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Row(children: [
+              Text(tr('إعلان'), style: TextStyle(fontSize: 18, color: Colors.white, fontWeight: FontWeight.w700)),
+              const Spacer(),
+              Text(_left > 0 ? '$_left' : '', style: const TextStyle(fontSize: 18, color: Color(0xFFFFE08A), fontWeight: FontWeight.w800)),
+            ]),
+            const SizedBox(height: 12),
+            Container(
+              height: 150,
+              width: 280,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(color: const Color(0xFF2A2C31), borderRadius: BorderRadius.circular(12)),
+              child: const Icon(Icons.smart_display, size: 64, color: Color(0xFF8A8D92)),
+            ),
+            const SizedBox(height: 12),
+            if (_left > 0)
+              Row(mainAxisSize: MainAxisSize.min, children: [
+                Text(trf('كمّل الإعلان وتاخذ {0}', [Wallet.adReward]), style: const TextStyle(fontSize: 14, color: Color(0xFFCCCCCC))),
+                const SizedBox(width: 4),
+                const GhawaziIcon(size: 16),
+              ])
+            else
+              Pressable(child: FilledButton(
+                onPressed: withTap(() => Navigator.pop(context, true)),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [const GhawaziIcon(size: 18), const SizedBox(width: 6), Text(trf('استلم {0}', [Wallet.adReward]), style: const TextStyle(fontSize: 17))]),
+              )),
+            const SizedBox(height: 6),
+            TextButton(
+              onPressed: withTap(() => Navigator.pop(context, false)),
+              child: Text(_left > 0 ? tr('سكّر (بدون جايزة)') : tr('سكّر'), style: const TextStyle(fontSize: 13, color: Color(0xFFAAAAAA))),
+            ),
+          ]),
+        ),
       );
 }

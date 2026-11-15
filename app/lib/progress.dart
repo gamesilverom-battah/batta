@@ -3,15 +3,17 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'i18n.dart';
 import 'wallet.dart';
 
 /// تحدي: عدّاد لازم يوصل لهدف، وجايزته غوازي
 class Challenge {
-  final String id, title;
+  final String id, titleAr;
+  String get title => tr(titleAr);
   final String stat; // العدّاد اللي يحسب (نفس مفاتيح الإحصائيات)
   final int goal, reward;
   final bool weekly;
-  const Challenge(this.id, this.title, this.stat, this.goal, this.reward, {this.weekly = false});
+  const Challenge(this.id, this.titleAr, this.stat, this.goal, this.reward, {this.weekly = false});
 }
 
 /// التحديات تنحسب من المباريات أونلاين بس (لأن جايزتها غوازي)
@@ -28,8 +30,9 @@ const weeklyChallenges = [
 
 /// سطر بصفحة «تاريخك»
 class StatLine {
-  final String key, title;
-  const StatLine(this.key, this.title);
+  final String key, titleAr;
+  String get title => tr(titleAr);
+  const StatLine(this.key, this.titleAr);
 }
 
 const historyStats = [
@@ -69,6 +72,31 @@ class Progress extends ChangeNotifier {
   }
 
   int value(String stat) => stats[stat] ?? 0;
+
+  // ---------- المستوى ----------
+  // الخبرة من اللعب: كل مباراة 20، كل فوز 30 زيادة، كل جولة 2، وكل باون 50.
+  // المستوى 2 يبي 100 خبرة، و3 يبي 300، و4 يبي 600 ... (كل مستوى أطول من اللي قبله بـ 100)
+  int get xp => value('matches') * 20 + value('wins') * 30 + value('rounds') * 2 + value('bawanMade') * 50;
+  static int xpFor(int level) => 50 * level * (level - 1); // الخبرة اللازمة لبداية المستوى
+  int get level {
+    var l = 1;
+    while (xp >= xpFor(l + 1)) {
+      l++;
+    }
+    return l;
+  }
+
+  /// ملخص يشوفه اللاعبين الثانين لما يضغطون على شخصيتي باللعب
+  Map<String, int> publicProfile() => {
+        'level': level,
+        for (final k in const ['matches', 'wins', 'losses', 'rounds', 'bought', 'boughtMade', 'bigBidMade', 'bawanMade', 'bawanFailed', 'bawanBroken', 'points']) k: value(k),
+      };
+
+  /// كم قطع من المستوى الحالي (0 لـ 1)
+  double get levelProgress {
+    final l = level, from = xpFor(l), to = xpFor(l + 1);
+    return ((xp - from) / (to - from)).clamp(0.0, 1.0);
+  }
   int progress(Challenge c) => ((c.weekly ? _weekly : _daily)[c.stat] ?? 0).clamp(0, c.goal);
   bool done(Challenge c) => progress(c) >= c.goal;
   bool isClaimed(Challenge c) => claimed.contains(c.id);

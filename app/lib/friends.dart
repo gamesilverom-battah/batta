@@ -2,11 +2,13 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
+import 'package:flutter/foundation.dart' show mapEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+import 'i18n.dart';
 import 'avatars.dart';
 import 'menus.dart';
 import 'sounds.dart';
@@ -19,7 +21,7 @@ class Friend {
   String? char;
   Friend(this.code, this.name, [this.char]);
   Map<String, dynamic> toJson() => {'code': code, 'name': name, 'char': char};
-  static Friend fromJson(Map m) => Friend(m['code'] as String, m['name'] as String? ?? 'صديق', m['char'] as String?);
+  static Friend fromJson(Map m) => Friend(m['code'] as String, m['name'] as String? ?? tr('صديق'), m['char'] as String?);
 }
 
 /// حالة الصديق: متصل، يلعب، بغرفة، أو مو متصل (null)
@@ -62,10 +64,10 @@ class Friends extends ChangeNotifier {
   /// إضافة بالكود: يرجع رسالة خطأ أو null إذا انضاف
   String? add(String code, {String? name, String? char}) {
     final c = clean(code);
-    if (c.length != 6) return 'الكود 6 حروف وأرقام';
-    if (c == myCode) return 'هذا كودك أنت';
-    if (list.any((f) => f.code == c)) return 'موجود عندك';
-    list.add(Friend(c, name ?? 'صديق', char));
+    if (c.length != 6) return tr('الكود 6 حروف وأرقام');
+    if (c == myCode) return tr('هذا كودك أنت');
+    if (list.any((f) => f.code == c)) return tr('موجود عندك');
+    list.add(Friend(c, name ?? tr('صديق'), char));
     notifyListeners();
     _save();
     refresh();
@@ -167,6 +169,7 @@ class Friends extends ChangeNotifier {
     final m = jsonDecode(raw as String) as Map<String, dynamic>;
     switch (m['t']) {
       case 'friends':
+        final before = Map.of(status);
         status.clear();
         var changed = false;
         (m['online'] as Map).forEach((code, v) {
@@ -186,9 +189,9 @@ class Friends extends ChangeNotifier {
           }
         });
         if (changed) _save();
-        notifyListeners();
+        if (changed || !mapEquals(before, status)) notifyListeners();
       case 'invited':
-        invite = (from: m['from'] as String? ?? 'صديقك', code: m['code'] as String);
+        invite = (from: m['from'] as String? ?? tr('صديقك'), code: m['code'] as String);
         notifyListeners();
     }
   }
@@ -217,10 +220,10 @@ class Friends extends ChangeNotifier {
 const _green = Color(0xFF4FCB6B), _orange = Color(0xFFF2A33A), _blue = Color(0xFF6FB2FF), _grey = Color(0xFF8A8D92);
 
 ({String label, Color color}) statusLook(FriendStatus? s) => switch (s) {
-      FriendStatus.online => (label: 'متصل', color: _green),
-      FriendStatus.playing => (label: 'يلعب الحين', color: _orange),
-      FriendStatus.room => (label: 'بغرفة', color: _blue),
-      null => (label: 'مو متصل', color: _grey),
+      FriendStatus.online => (label: tr('متصل'), color: _green),
+      FriendStatus.playing => (label: tr('يلعب الحين'), color: _orange),
+      FriendStatus.room => (label: tr('بغرفة'), color: _blue),
+      null => (label: tr('مو متصل'), color: _grey),
     };
 
 /// زر الأصدقاء فوق على اليسار: وعليه عدد المتصلين
@@ -235,15 +238,15 @@ class FriendsButton extends StatelessWidget {
           final n = Friends.instance.onlineCount;
           return Pressable(child: OutlinedButton(
             onPressed: withTap(onTap),
-            style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8), minimumSize: const Size(44, 44)),
+            style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10), minimumSize: const Size(54, 52)),
             child: Row(mainAxisSize: MainAxisSize.min, children: [
-              const Icon(Icons.people_alt, size: 22),
+              const Icon(Icons.people_alt, size: 28),
               if (n > 0) ...[
-                const SizedBox(width: 6),
+                const SizedBox(width: 7),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                  decoration: BoxDecoration(color: _green, borderRadius: BorderRadius.circular(10)),
-                  child: Text('$n', style: const TextStyle(fontSize: 13, height: 1.2, color: Colors.black, fontWeight: FontWeight.w800)),
+                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 1),
+                  decoration: BoxDecoration(color: _green, borderRadius: BorderRadius.circular(11)),
+                  child: Text('$n', style: const TextStyle(fontSize: 15, height: 1.2, color: Colors.black, fontWeight: FontWeight.w800)),
                 ),
               ],
             ]),
@@ -308,7 +311,7 @@ class _FriendsPageState extends State<FriendsPage> {
           ]),
         ),
         Pressable(child: IconButton(
-          tooltip: 'شيله',
+          tooltip: tr('شيله'),
           icon: const Icon(Icons.close, size: 18, color: Color(0xFF999999)),
           onPressed: withTap(() => Friends.instance.remove(f.code)),
         )),
@@ -326,23 +329,23 @@ class _FriendsPageState extends State<FriendsPage> {
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 620),
               child: Column(children: [
-                Padding(padding: const EdgeInsets.fromLTRB(16, 10, 16, 0), child: BackRow(title: 'الأصدقاء', onBack: widget.onBack)),
+                Padding(padding: const EdgeInsets.fromLTRB(16, 10, 16, 0), child: BackRow(title: tr('الأصدقاء'), onBack: widget.onBack)),
                 Expanded(
                   child: ListView(padding: const EdgeInsets.fromLTRB(16, 12, 16, 16), children: [
                     // كودك: ترسله لربعك عشان يضيفونك
                     _panel(
                       child: Row(children: [
-                        const Expanded(
+                        Expanded(
                           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                            Text('كودك', style: TextStyle(fontSize: 14, color: Color(0xFFBBBBBB))),
-                            Text('أرسله لربعك عشان يضيفونك', style: TextStyle(fontSize: 12, color: Color(0xFF999999))),
+                            Text(tr('كودك'), style: TextStyle(fontSize: 14, color: Color(0xFFBBBBBB))),
+                            Text(tr('أرسله لربعك عشان يضيفونك'), style: TextStyle(fontSize: 12, color: Color(0xFF999999))),
                           ]),
                         ),
                         Pressable(child: GestureDetector(
                           onTap: withTap(() {
                             Clipboard.setData(ClipboardData(text: fr.myCode));
-                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                              content: Text('نسخت كودك', style: TextStyle(color: Colors.black, fontFamily: 'ElMessiri', fontSize: 18)),
+                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                              content: Text(tr('نسخت كودك'), style: TextStyle(color: Colors.black, fontFamily: 'ElMessiri', fontSize: 18)),
                               backgroundColor: Colors.white,
                               duration: Duration(seconds: 2),
                             ));
@@ -360,7 +363,7 @@ class _FriendsPageState extends State<FriendsPage> {
                     // أضف صديق بكوده
                     _panel(
                       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                        const Text('أضف صديق', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: Colors.white)),
+                        Text(tr('أضف صديق'), style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: Colors.white)),
                         const SizedBox(height: 8),
                         Row(children: [
                           Expanded(
@@ -370,7 +373,7 @@ class _FriendsPageState extends State<FriendsPage> {
                               textCapitalization: TextCapitalization.characters,
                               maxLength: 6,
                               style: const TextStyle(fontSize: 20, letterSpacing: 4, color: Colors.white),
-                              decoration: InputDecoration(hintText: 'كود صديقك', counterText: '', isDense: true, errorText: _error),
+                              decoration: InputDecoration(hintText: tr('كود صديقك'), counterText: '', isDense: true, errorText: _error),
                               onSubmitted: (_) => _add(),
                             ),
                           ),
@@ -378,7 +381,7 @@ class _FriendsPageState extends State<FriendsPage> {
                           Pressable(child: FilledButton.icon(
                             onPressed: withTap(_add),
                             icon: const Icon(Icons.person_add_alt_1, size: 20),
-                            label: const Text('أضف', style: TextStyle(fontSize: 16)),
+                            label: Text(tr('أضف'), style: TextStyle(fontSize: 16)),
                           )),
                         ]),
                       ]),
@@ -387,15 +390,15 @@ class _FriendsPageState extends State<FriendsPage> {
                     _panel(
                       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
                         Row(children: [
-                          const Text('أصدقاؤك', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: Colors.white)),
+                          Text(tr('أصدقاؤك'), style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: Colors.white)),
                           const Spacer(),
-                          Text('$online متصل من ${fr.list.length}', style: const TextStyle(fontSize: 13, color: _green)),
+                          Text(trf('{0} متصل من {1}', [online, fr.list.length]), style: const TextStyle(fontSize: 13, color: _green)),
                         ]),
                         const SizedBox(height: 8),
                         if (fr.list.isEmpty)
-                          const Padding(
+                          Padding(
                             padding: EdgeInsets.symmetric(vertical: 14),
-                            child: Text('ما عندك أصدقاء للحين. أضفهم بكودهم، أو من الغرفة.', textAlign: TextAlign.center, style: TextStyle(fontSize: 14, color: Color(0xFFAAAAAA))),
+                            child: Text(tr('ما عندك أصدقاء للحين. أضفهم بكودهم، أو من الغرفة.'), textAlign: TextAlign.center, style: TextStyle(fontSize: 14, color: Color(0xFFAAAAAA))),
                           )
                         else
                           for (final f in fr.sorted) _friendTile(f),
@@ -442,7 +445,7 @@ class InviteBanner extends StatelessWidget {
                         const Icon(Icons.mail, color: Color(0xFFFFE08A), size: 24),
                         const SizedBox(width: 8),
                         Flexible(
-                          child: Text('${inv.from} يدعوك لغرفته', maxLines: 2, style: const TextStyle(fontSize: 16, color: Colors.white, fontWeight: FontWeight.w700)),
+                          child: Text(trf('{0} يدعوك لغرفته', [inv.from]), maxLines: 2, style: const TextStyle(fontSize: 16, color: Colors.white, fontWeight: FontWeight.w700)),
                         ),
                         const SizedBox(width: 10),
                         Pressable(child: FilledButton(
@@ -451,11 +454,11 @@ class InviteBanner extends StatelessWidget {
                             onJoin(inv.code);
                           }),
                           style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8), minimumSize: const Size(0, 38)),
-                          child: const Text('ادخل', style: TextStyle(fontSize: 16)),
+                          child: Text(tr('ادخل'), style: TextStyle(fontSize: 16)),
                         )),
                         const SizedBox(width: 6),
                         Pressable(child: IconButton(
-                          tooltip: 'لا',
+                          tooltip: tr('لا'),
                           icon: const Icon(Icons.close, color: Color(0xFFBBBBBB), size: 20),
                           onPressed: withTap(Friends.instance.clearInvite),
                         )),
@@ -493,12 +496,12 @@ class _FriendsToInviteState extends State<FriendsToInvite> {
           // اللي يلعب الحين ما ندعيه (بنص مباراة)
           final online = fr.sorted.where((f) => fr.status[f.code] == FriendStatus.online || fr.status[f.code] == FriendStatus.room).toList();
           return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            const Text('أصدقاؤك المتصلون', style: TextStyle(fontSize: 15, color: Color(0xFFBBBBBB))),
+            Text(tr('أصدقاؤك المتصلون'), style: TextStyle(fontSize: 15, color: Color(0xFFBBBBBB))),
             const SizedBox(height: 6),
             if (online.isEmpty)
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 6),
-                child: Text(fr.list.isEmpty ? 'ما عندك أصدقاء للحين' : 'ما فيه أحد متصل الحين', textAlign: TextAlign.center, style: const TextStyle(fontSize: 14, color: Color(0xFF999999))),
+                child: Text(fr.list.isEmpty ? tr('ما عندك أصدقاء للحين') : tr('ما فيه أحد متصل الحين'), textAlign: TextAlign.center, style: const TextStyle(fontSize: 14, color: Color(0xFF999999))),
               )
             else
               ConstrainedBox(
@@ -520,7 +523,7 @@ class _FriendsToInviteState extends State<FriendsToInvite> {
                                     setState(() => _sent.add(f.code));
                                   }),
                             style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4), minimumSize: const Size(0, 32)),
-                            child: Text(_sent.contains(f.code) ? 'انرسلت ✓' : 'ادعه', style: const TextStyle(fontSize: 14)),
+                            child: Text(_sent.contains(f.code) ? tr('انرسلت ✓') : tr('ادعه'), style: const TextStyle(fontSize: 14)),
                           )),
                         ]),
                       ),

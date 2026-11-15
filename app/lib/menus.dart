@@ -1,9 +1,9 @@
-import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
 
 import 'cards.dart';
+import 'i18n.dart';
 import 'main.dart' show ChromeBackground, showErrors;
 import 'net.dart';
 import 'sounds.dart';
@@ -78,18 +78,15 @@ class _SettingsSheet extends StatefulWidget {
 }
 
 class _SettingsSheetState extends State<_SettingsSheet> {
-  late final _server = TextEditingController(text: widget.client.serverUrl);
-
-  @override
-  void dispose() {
-    _server.dispose();
-    super.dispose();
-  }
-
   void _voiceSample() {
     final c = widget.client;
     Sfx.voice(0, Sfx.hasVoice(c.char, VoiceEvent.pass) ? c.char! : 'fares', VoiceEvent.pass);
   }
+
+  Widget _title(String text) => Padding(
+        padding: const EdgeInsets.only(top: 12, bottom: 4),
+        child: Align(alignment: AlignmentDirectional.centerStart, child: Text(text, style: const TextStyle(fontSize: 14, color: Color(0xFFBBBBBB)))),
+      );
 
   Widget _sound(String title, bool on, double level, ValueChanged<bool> setOn, ValueChanged<double> setLevel, VoidCallback sample) => Column(mainAxisSize: MainAxisSize.min, children: [
         Row(children: [
@@ -119,51 +116,144 @@ class _SettingsSheetState extends State<_SettingsSheet> {
         ]),
       ]);
 
+  // اللغة: العربية أو الإنجليزي (المحدد أبيض)
+  Widget _langButton(bool english, String label) {
+    final on = Lang.instance.en == english;
+    return Expanded(
+      child: Pressable(child: GestureDetector(
+        onTap: withTap(on ? null : () => Lang.instance.set(english)),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 9),
+          color: on ? Colors.white : const Color(0xFF111111),
+          child: Text(label, textAlign: TextAlign.center, style: TextStyle(fontSize: 16, color: on ? Colors.black : Colors.white)),
+        ),
+      )),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = widget.client;
-    return SafeArea(
-      child: Padding(
-        padding: EdgeInsets.fromLTRB(16, 14, 16, 12 + MediaQuery.viewInsetsOf(context).bottom),
-        child: SingleChildScrollView(
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 420),
-              child: Column(mainAxisSize: MainAxisSize.min, children: [
-                const Text('الإعدادات', style: TextStyle(fontSize: 20, color: Colors.white, fontWeight: FontWeight.w700)),
-                const SizedBox(height: 10),
-                _sound('أصوات اللعبة', Sfx.sfxOn, Sfx.sfxVolume, (v) => Sfx.sfxOn = v, (v) => Sfx.sfxVolume = v, Sfx.tap),
-                _sound('أصوات الشخصيات', Sfx.voiceOn, Sfx.voiceVolume, (v) => Sfx.voiceOn = v, (v) => Sfx.voiceVolume = v, _voiceSample),
-                Row(children: [
-                  const Expanded(child: Text('أنميشن الشعار عند فتح اللعبة', style: TextStyle(fontSize: 17, color: Colors.white, fontWeight: FontWeight.w700))),
-                  Switch(value: c.intro, onChanged: (v) => setState(() => c.setIntro(v))),
-                ]),
-                ExpansionTile(
-                  tilePadding: EdgeInsets.zero,
-                  title: const Text('إعدادات السيرفر', style: TextStyle(fontSize: 14, color: Color(0xFFBBBBBB))),
-                  iconColor: Colors.white,
-                  collapsedIconColor: Colors.white,
-                  children: [
-                    TextField(
-                      controller: _server,
-                      textDirection: TextDirection.ltr,
-                      style: const TextStyle(color: Colors.white),
-                      decoration: const InputDecoration(labelText: 'رابط السيرفر (ws://...)'),
-                      onChanged: (v) => c.serverUrl = v.trim(),
+    return ListenableBuilder(
+      listenable: Listenable.merge([c, Lang.instance]),
+      builder: (context, _) => SafeArea(
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(16, 14, 16, 12 + MediaQuery.viewInsetsOf(context).bottom),
+          child: SingleChildScrollView(
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 420),
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  Text(tr('الإعدادات'), style: TextStyle(fontSize: 20, color: Colors.white, fontWeight: FontWeight.w700)),
+                  // الحساب: الاسم وتغييره، وتسجيل الخروج (قريباً مع الحسابات)
+                  _title(tr('الحساب')),
+                  Row(children: [
+                    const Icon(Icons.person, color: Colors.white, size: 22),
+                    const SizedBox(width: 8),
+                    Expanded(child: Text(c.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 18, color: Colors.white, fontWeight: FontWeight.w700))),
+                    Pressable(child: OutlinedButton(
+                      onPressed: withTap(() => showNameChange(context, c)),
+                      style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6), minimumSize: const Size(0, 36)),
+                      child: Text(tr('تغيير الاسم'), style: TextStyle(fontSize: 14)),
+                    )),
+                  ]),
+                  const SizedBox(height: 8),
+                  Row(children: [
+                    const Icon(Icons.logout, color: Color(0xFF888888), size: 22),
+                    const SizedBox(width: 8),
+                    Expanded(child: Text(tr('تسجيل الخروج'), style: TextStyle(fontSize: 16, color: Color(0xFF888888)))),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                      decoration: BoxDecoration(color: const Color(0xFF2A2C31), borderRadius: BorderRadius.circular(10)),
+                      child: Text(tr('قريباً مع الحسابات'), style: TextStyle(fontSize: 12, color: Color(0xFFAAAAAA))),
                     ),
-                    const SizedBox(height: 8),
-                  ],
-                ),
-                const SizedBox(height: 6),
-                Pressable(child: OutlinedButton.icon(
-                  onPressed: withTap(() => Navigator.pop(context)),
-                  icon: const Icon(Icons.arrow_back, size: 20),
-                  label: const Text('رجوع'),
-                )),
-              ]),
+                  ]),
+                  _title(tr('اللغة')),
+                  Container(
+                    clipBehavior: Clip.antiAlias,
+                    decoration: BoxDecoration(borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.white, width: 2)),
+                    child: Row(children: [_langButton(false, tr('العربية')), _langButton(true, 'English')]),
+                  ),
+                  _title(tr('الأصوات')),
+                  _sound(tr('أصوات اللعبة'), Sfx.sfxOn, Sfx.sfxVolume, (v) => Sfx.sfxOn = v, (v) => Sfx.sfxVolume = v, Sfx.tap),
+                  _sound(tr('أصوات الشخصيات'), Sfx.voiceOn, Sfx.voiceVolume, (v) => Sfx.voiceOn = v, (v) => Sfx.voiceVolume = v, _voiceSample),
+                  const SizedBox(height: 6),
+                  Pressable(child: OutlinedButton.icon(
+                    onPressed: withTap(() => Navigator.pop(context)),
+                    icon: const Icon(Icons.arrow_back, size: 20),
+                    label: Text(tr('رجوع')),
+                  )),
+                ]),
+              ),
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// تغيير الاسم: مرتين مجاناً (بعد الاسم الأول)، وبعدها 1$ (قريباً مع الشراء الحقيقي)
+void showNameChange(BuildContext context, GameClient c) {
+  showDialog(context: context, builder: (_) => _NameChangeDialog(client: c));
+}
+
+class _NameChangeDialog extends StatefulWidget {
+  final GameClient client;
+  const _NameChangeDialog({required this.client});
+
+  @override
+  State<_NameChangeDialog> createState() => _NameChangeDialogState();
+}
+
+class _NameChangeDialogState extends State<_NameChangeDialog> {
+  late final _name = TextEditingController(text: widget.client.name);
+
+  @override
+  void dispose() {
+    _name.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    if (await widget.client.changeName(_name.text) && mounted) Navigator.pop(context);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final left = widget.client.freeNameChangesLeft;
+    final free = left > 0;
+    return Dialog(
+      backgroundColor: const Color(0xFF1B1C1F),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: const BorderSide(color: Colors.white, width: 2)),
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Text(tr('تغيير الاسم'), style: TextStyle(fontSize: 20, color: Colors.white, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 6),
+          Text(free ? trf('باقي لك {0} تغيير مجاني', [left]) : tr('خلصت التغييرات المجانية، التغيير الجاي بـ 1\$'),
+              textAlign: TextAlign.center, style: TextStyle(fontSize: 14, color: free ? const Color(0xFF6FD68A) : const Color(0xFFFFE08A))),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _name,
+            enabled: free,
+            autofocus: free,
+            textAlign: TextAlign.center,
+            maxLength: 20,
+            style: const TextStyle(fontSize: 20, color: Colors.white),
+            decoration: InputDecoration(labelText: tr('اسمك الجديد'), counterText: ''),
+            onSubmitted: (_) => _save(),
+          ),
+          const SizedBox(height: 12),
+          if (free)
+            Pressable(child: FilledButton(onPressed: withTap(_save), child: Text(tr('غيّر'), style: TextStyle(fontSize: 17))))
+          else
+            FilledButton(
+              onPressed: null,
+              child: Row(mainAxisSize: MainAxisSize.min, children: [const Text('1\$', style: TextStyle(fontSize: 17)), const SizedBox(width: 6), Text(tr('قريباً'), style: TextStyle(fontSize: 12))]),
+            ),
+          TextButton(onPressed: withTap(() => Navigator.pop(context)), child: Text(tr('رجوع'), style: TextStyle(color: Color(0xFFAAAAAA)))),
+        ]),
       ),
     );
   }
@@ -372,25 +462,8 @@ class _CardShuffleState extends State<CardShuffle> with SingleTickerProviderStat
   }
 }
 
-const _waitTop = 'استغفر ربك وصل على النبي';
-const _waitLine = 'قاعدين ندورلك ربع';
-
-/// فوق شاشة انتظار الغرفة المخصصة
-class WaitBanner extends StatelessWidget {
-  const WaitBanner({super.key});
-
-  @override
-  Widget build(BuildContext context) => const Padding(
-        padding: EdgeInsets.only(bottom: 10),
-        child: Column(children: [
-          FittedBox(fit: BoxFit.scaleDown, child: Text(_waitTop, style: TextStyle(fontSize: 30, fontWeight: FontWeight.w700, color: KoutColors.ink))),
-          SizedBox(height: 4),
-          CardShuffle(cardWidth: 34),
-          SizedBox(height: 2),
-          Text(_waitLine, style: TextStyle(fontSize: 16, color: KoutColors.ink)),
-        ]),
-      );
-}
+String get _waitTop => tr('استغفر ربك وصل على النبي');
+String get _waitLine => tr('قاعدين ندورلك ربع');
 
 /// البحث عن لاعبين: أقصى شي دقيقة ونص، وبعدها البوتات تكمّل
 class SearchScreen extends StatefulWidget {
@@ -401,29 +474,13 @@ class SearchScreen extends StatefulWidget {
   State<SearchScreen> createState() => _SearchScreenState();
 }
 
+// العد التنازلي مخفي: البحث يخلص بوقته بالسيرفر (والبوتات تكمّل)، بس اللاعب ما يشوف الوقت
 class _SearchScreenState extends State<SearchScreen> {
-  late final Timer _clock = Timer.periodic(const Duration(seconds: 1), (_) => setState(() {}));
-
-  @override
-  void initState() {
-    super.initState();
-    _clock;
-  }
-
-  @override
-  void dispose() {
-    _clock.cancel();
-    super.dispose();
-  }
-
   @override
   Widget build(BuildContext context) {
     final c = widget.client;
     showErrors(context, c);
     final found = c.seats.where((s) => s != null).length;
-    final ends = c.searchEnds;
-    final left = ends == null ? 0 : max(0, ends.difference(DateTime.now()).inSeconds);
-    final time = '${left ~/ 60}:${(left % 60).toString().padLeft(2, '0')}';
     final score = c.room?['winScore'];
     return Scaffold(
       body: ChromeBackground(
@@ -434,20 +491,19 @@ class _SearchScreenState extends State<SearchScreen> {
               child: Padding(
                 padding: const EdgeInsets.all(20),
                 child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  const Text(_waitTop, textAlign: TextAlign.center, style: TextStyle(fontSize: 36, fontWeight: FontWeight.w700, color: KoutColors.ink)),
+                  Text(_waitTop, textAlign: TextAlign.center, style: TextStyle(fontSize: 36, fontWeight: FontWeight.w700, color: KoutColors.ink)),
                   const SizedBox(height: 26),
                   const CardShuffle(),
                   const SizedBox(height: 18),
-                  const Text(_waitLine, style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700, color: KoutColors.ink)),
+                  Text(_waitLine, style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700, color: KoutColors.ink)),
                   const SizedBox(height: 6),
-                  Text('$found من ${c.mode} لاعبين · من $score نقطة', style: const TextStyle(fontSize: 17, color: KoutColors.ink)),
-                  Text(time, style: const TextStyle(fontSize: 17, color: KoutColors.ink)),
+                  Text(trf('{0} من {1} لاعبين · من {2} نقطة', [found, c.mode, score]), style: const TextStyle(fontSize: 17, color: KoutColors.ink)),
                   const SizedBox(height: 16),
                   Pressable(child: OutlinedButton.icon(
                     onPressed: withTap(c.leave),
                     style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 28)),
                     icon: const Icon(Icons.arrow_back, size: 20),
-                    label: const Text('رجوع'),
+                    label: Text(tr('رجوع')),
                   )),
                 ]),
               ),
@@ -543,5 +599,43 @@ class _MenuBackdropState extends State<MenuBackdrop> with SingleTickerProviderSt
             ]),
           ),
         ),
+      );
+}
+
+/// خيار بصفحة الأطوار: بطاقة بيضاء، المحدد بإطار ذهبي ولمعة، والممنوع باهت
+class OptionTile extends StatelessWidget {
+  final bool selected, enabled;
+  final Widget icon;
+  final String title, subtitle;
+  final VoidCallback onTap;
+  const OptionTile({super.key, required this.selected, this.enabled = true, required this.icon, required this.title, required this.subtitle, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) => Opacity(
+        opacity: enabled ? 1 : 0.45,
+        child: Pressable(child: GestureDetector(
+          onTap: enabled ? withTap(onTap) : null,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 160),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+            decoration: BoxDecoration(
+              color: selected ? const Color(0xFFFFF6D6) : Colors.white,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: selected ? const Color(0xFFD9A441) : const Color(0xFF111111), width: selected ? 4 : 3),
+              boxShadow: selected ? const [BoxShadow(color: Color(0x88FFD65A), blurRadius: 12)] : const [BoxShadow(color: Colors.black26, blurRadius: 6, offset: Offset(0, 3))],
+            ),
+            child: Row(children: [
+              Bob(phase: title.hashCode % 10 / 10, lift: selected ? 2.5 : 0, child: icon),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+                  FittedBox(fit: BoxFit.scaleDown, alignment: AlignmentDirectional.centerStart, child: Text(title, style: const TextStyle(fontSize: 17, height: 1.2, fontWeight: FontWeight.w800, color: Colors.black))),
+                  Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12, height: 1.2, color: Color(0xFF2E7D32))),
+                ]),
+              ),
+              if (selected) const Icon(Icons.check_circle, size: 20, color: Color(0xFFB8860B)),
+            ]),
+          ),
+        )),
       );
 }

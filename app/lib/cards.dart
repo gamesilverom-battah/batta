@@ -2,17 +2,16 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 
+import 'i18n.dart';
+
 
 /// ألوان الثيم: رمادي على أسود، مع ألوان الفريقين، وكروم الشعار للقوائم والنوافذ.
 class KoutColors {
   static const bg = Color(0xFF000000);
   static const surface = Color(0xFF141414);
-  static const surfaceHigh = Color(0xFF1F1F1F);
   static const line = Color(0xFF3A3A3A);
   static const text = Color(0xFFD6D6D6);
-  static const textDim = Color(0xFF8A8A8A);
   static const accent = Color(0xFF9E9E9E);
-  static const cardBack = Color(0xFF1A1A1A);
   static const redSuit = Color(0xFFD11F1F); // هاس وديمن: أحمر
   static const blackSuit = Color(0xFF111111); // سبيت وكلفس: أسود
   static const madmoon = Color(0xFF43A047); // كلمة مضمون: أخضر
@@ -27,7 +26,7 @@ class KoutColors {
   static const chromeButton = Color(0xFF4A4F56);
 
   static Color team(int t) => t == 0 ? teamBlue : teamYellow;
-  static String teamName(int t) => t == 0 ? 'الأزرق' : 'الأصفر';
+  static String teamName(int t) => tr(t == 0 ? 'الأزرق' : 'الأصفر');
 
   /// تدرّج الكروم (نفس خلفية الشعار): فاتح فوق، يغمق بالنص، يفتح تحت
   static LinearGradient chrome([double alpha = 1]) => LinearGradient(
@@ -49,11 +48,8 @@ const suitNames = {'S': 'سبيت', 'H': 'هاس', 'D': 'ديمن', 'C': 'كلف
 // نفس ترتيب الأوراق باليد: هاس، كلفس، ديمن، سبيت
 const suitOrder = ['H', 'C', 'D', 'S'];
 
-String rankLabel(int r) => switch (r) { 14 => 'A', 13 => 'K', 12 => 'Q', 11 => 'J', _ => '$r' };
-
 bool isRedSuit(String s) => s == 'H' || s == 'D';
 Color suitColor(String s) => isRedSuit(s) ? KoutColors.redSuit : KoutColors.blackSuit;
-bool isJokerCard(String c) => c == 'JB' || c == 'JG';
 
 /// نسبة طول الورقة لعرضها (200×290)
 const cardRatio = 1.45;

@@ -45,7 +45,7 @@ function newCode() {
   return code;
 }
 
-function createRoom(mode = E.PLAYERS, winScore = E.WIN_SCORE) {
+function createRoom(mode = E.PLAYERS, winScore = E.WIN_SCORE, signals = true) {
   const room = {
     code: newCode(),
     mode,
@@ -55,6 +55,7 @@ function createRoom(mode = E.PLAYERS, winScore = E.WIN_SCORE) {
     search: null, // مفتاح البحث إذا الغرفة تدور لاعبين
     searchEnds: null,
     practice: false, // تدريب: بوتات وبدون وقت
+    signals, // «مع إشارة ميدان» أو «بدون إشارة»
     game: null,
     timer: null,
     deadline: null, // متى يخلص وقت اللاعب الحالي
@@ -92,8 +93,9 @@ function lobbyInfo(room) {
     search: !!room.search,
     searchMsLeft: room.search ? Math.max(0, room.searchEnds - Date.now()) : null,
     practice: room.practice,
+    signals: room.signals,
     // fc: كود الصداقة للاعب (عشان يقدر الباقين يضيفونه)
-    seats: room.seats.map((s) => s && { name: s.name, bot: s.bot, connected: s.bot || !!s.ws, char: s.char, fc: s.bot ? undefined : s.ws?.ctx?.fc }),
+    seats: room.seats.map((s) => s && { name: s.name, bot: s.bot, connected: s.bot || !!s.ws, char: s.char, fc: s.bot ? undefined : s.ws?.ctx?.fc, profile: s.bot ? undefined : s.ws?.ctx?.profile }),
   };
 }
 
@@ -177,7 +179,7 @@ function startSearched(room) {
   room.searchEnds = null;
   room.seats.forEach((s, i) => { if (!s) room.seats[i] = newSeat(room, { bot: true }); });
   room.host = room.seats.find((s) => !s.bot)?.token ?? null;
-  room.game = E.createMatch({ players: room.mode, winScore: room.winScore });
+  room.game = E.createMatch({ players: room.mode, winScore: room.winScore, signals: room.signals });
   schedule(room);
   broadcast(room);
 }
@@ -208,9 +210,22 @@ function presenceOf(fc) {
   return best && { ...best, name, char };
 }
 
+// ملخص اللاعب اللي يبينه الباقين لما يضغطون على شخصيته (من «تاريخك» عنده): أرقام بس
+const PROFILE_KEYS = ['level', 'matches', 'wins', 'losses', 'rounds', 'bought', 'boughtMade', 'bigBidMade', 'bawanMade', 'bawanFailed', 'bawanBroken', 'points'];
+function cleanProfile(p) {
+  if (!p || typeof p !== 'object') return undefined;
+  const out = {};
+  for (const k of PROFILE_KEYS) {
+    const v = Math.floor(Number(p[k]));
+    if (Number.isFinite(v) && v >= 0) out[k] = Math.min(v, 1e7);
+  }
+  return out;
+}
+
 function handle(ws, msg) {
   const ctx = ws.ctx;
   if (msg.fc) ctx.fc = cleanCode(msg.fc);
+  if (msg.profile) ctx.profile = cleanProfile(msg.profile);
   if (msg.name) ctx.name = cleanName(msg.name);
   if (msg.char && CHARACTERS.some((c) => c.id === msg.char)) ctx.char = msg.char;
   switch (msg.t) {
@@ -236,7 +251,7 @@ function handle(ws, msg) {
       return send(ws, { t: 'inviteSent', to, ok: sent });
     }
     case 'create': {
-      const room = createRoom();
+      const room = createRoom(E.PLAYERS, E.WIN_SCORE, msg.signals !== false);
       const seat = newSeat(room, { name: cleanName(msg.name), ws, want: msg.char });
       room.seats[0] = seat;
       room.host = seat.token;
@@ -267,10 +282,12 @@ function handle(ws, msg) {
     case 'search': { // بحث عن لاعبين: 6 أو 4، من 54 أو 34
       const mode = Number(msg.mode), score = Number(msg.score);
       if (!E.MODES.includes(mode) || !E.WIN_SCORES.includes(score)) return send(ws, { t: 'error', msg: 'خيار غير معروف' });
-      const key = `${mode}-${score}`;
+      // اللي اختاروا «بدون إشارة» يلعبون مع بعض بس
+      const signals = msg.signals !== false;
+      const key = `${mode}-${score}-${signals ? 'sig' : 'nosig'}`;
       let room = searching.get(key);
       if (!room) {
-        room = createRoom(mode, score);
+        room = createRoom(mode, score, signals);
         room.search = key;
         room.searchEnds = Date.now() + SEARCH_MS;
         room.searchTimer = setTimeout(() => startSearched(room), SEARCH_MS);
@@ -284,13 +301,13 @@ function handle(ws, msg) {
       return broadcast(room);
     }
     case 'practice': { // تدريب: اللاعب مع البوتات، 6 أو 4 لاعبين
-      const room = createRoom(E.MODES.includes(Number(msg.mode)) ? Number(msg.mode) : E.PLAYERS, 34);
+      const room = createRoom(E.MODES.includes(Number(msg.mode)) ? Number(msg.mode) : E.PLAYERS, 34, msg.signals !== false);
       room.practice = true;
       const seat = newSeat(room, { name: cleanName(msg.name), ws, want: msg.char });
       room.seats[0] = seat;
       room.host = seat.token;
       for (let i = 1; i < room.mode; i++) room.seats[i] = newSeat(room, { bot: true });
-      room.game = E.createMatch({ players: room.mode, winScore: room.winScore });
+      room.game = E.createMatch({ players: room.mode, winScore: room.winScore, signals: room.signals });
       ctx.room = room; ctx.token = seat.token;
       send(ws, { t: 'joined', code: room.code, token: seat.token });
       schedule(room);
@@ -339,6 +356,11 @@ function handle(ws, msg) {
         room.mode = mode;
         break;
       }
+      case 'signals': { // الغرفة المخصصة: المضيف يختار مع إشارة ميدان أو بدون
+        if (!isHost || room.game) throw illegal('للمضيف قبل البداية');
+        room.signals = msg.on !== false;
+        break;
+      }
       case 'addBots':
         if (!isHost || room.game) throw illegal('للمضيف قبل البداية');
         room.seats.forEach((s, i) => { if (!s) room.seats[i] = newSeat(room, { bot: true }); });
@@ -355,7 +377,7 @@ function handle(ws, msg) {
       case 'start':
         if (!isHost || room.game) throw illegal('للمضيف قبل البداية');
         if (room.seats.some((s) => !s)) throw illegal(`لازم ${room.mode} لاعبين (أو عبّي بالبوتات)`);
-        room.game = E.createMatch({ players: room.mode, winScore: room.winScore });
+        room.game = E.createMatch({ players: room.mode, winScore: room.winScore, signals: room.signals });
         break;
       case 'bid': E.bid(game(room), seat, msg.value === 'pass' || msg.value === E.MAJBUR ? msg.value : Number(msg.value)); break;
       case 'trump': E.chooseTrump(game(room), seat, msg.suit); break;
@@ -368,7 +390,7 @@ function handle(ws, msg) {
       }
       case 'rematch':
         if (!isHost || room.game?.phase !== 'matchEnd') throw illegal('للمضيف بعد نهاية المباراة');
-        room.game = E.createMatch({ players: room.mode, winScore: room.winScore });
+        room.game = E.createMatch({ players: room.mode, winScore: room.winScore, signals: room.signals });
         break;
       default:
         throw illegal('رسالة غير معروفة');
@@ -458,4 +480,4 @@ setInterval(() => {
 
 server.listen(PORT, () => console.log(`kout server listening on :${PORT}`));
 
-module.exports = { server, rooms, CHARACTERS, schedule, cleanCode };
+module.exports = { server, rooms, schedule };

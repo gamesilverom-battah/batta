@@ -5,6 +5,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 
 import 'main.dart' show appFont;
+import 'i18n.dart';
 import 'sounds.dart';
 
 /// أنميشن الشعار عند فتح اللعبة: الأوراق تنزل كومة، تنفتح مروحة والجوكر آخرها، «بتّه» تطلع تحتها،
@@ -163,7 +164,7 @@ class _IntroPainter extends CustomPainter {
     if (wordAlpha > 0) {
       final word = TextPainter(
         text: TextSpan(
-          text: 'بتّه',
+          text: tr('بتّه'),
           style: TextStyle(
             fontFamily: appFont,
             fontWeight: FontWeight.w700,

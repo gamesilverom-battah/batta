@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -123,6 +124,7 @@ class CharacterAvatar extends StatelessWidget {
   final bool talking; // الفم يتحرك (وقت ما يشتغل صوت الشخصية)
   final String? voice; // الصوت الشغّال (مثل wadamtih_3): الفم يتبع علوه
   final double? mouth; // فتحة فم ثابتة (للمعاينة)
+  final bool blink; // ترمش بين فترة وفترة (على الطاولة)، كل شخصية بوقتها
   const CharacterAvatar({
     super.key,
     required this.charId,
@@ -132,6 +134,7 @@ class CharacterAvatar extends StatelessWidget {
     this.talking = false,
     this.voice,
     this.mouth,
+    this.blink = false,
   });
 
   @override
@@ -172,7 +175,7 @@ class CharacterAvatar extends StatelessWidget {
                 child: Transform.scale(
                   scale: 1.3,
                   alignment: const Alignment(0, 0.62),
-                  child: _Face(charId: charId, talking: talking, voice: voice, mouth: mouth),
+                  child: _Face(charId: charId, talking: talking, voice: voice, mouth: mouth, blink: blink),
                 ),
               ),
             ]),
@@ -209,7 +212,8 @@ class _Face extends StatefulWidget {
   final bool talking;
   final String? voice;
   final double? mouth;
-  const _Face({required this.charId, required this.talking, this.voice, this.mouth});
+  final bool blink;
+  const _Face({required this.charId, required this.talking, this.voice, this.mouth, this.blink = false});
 
   @override
   State<_Face> createState() => _FaceState();
@@ -221,10 +225,49 @@ class _FaceState extends State<_Face> with SingleTickerProviderStateMixin {
 
   bool get _moving => widget.mouth == null && (widget.talking || widget.voice != null);
 
+  // رمشة وهو ساكت: كل شخصية تنتظر وقت عشوائي (2.5 لـ 6.5 ثانية) لحالها، فما يرمشون مع بعض.
+  // الرمشة ثلاث خطوات (نص مسكّرة، مسكّرة، نص) كل وحدة 50ms، وبعدها يرجع للصورة الجاهزة
+  static final _rnd = Random();
+  static int _blinkingNow = 0; // كم شخصية رامشة الحين: لو فيه وحدة، الثانية تنتظر شوي
+  Timer? _blinkTimer;
+  double? _blinkEye; // فتحة العين وقت الرمشة (null = مو رامش)
+
+  void _scheduleBlink() {
+    _blinkTimer?.cancel();
+    // رمشة انقطعت بالنص: نرجّع العداد والعين
+    if (_blinkEye != null) {
+      _blinkingNow = max(0, _blinkingNow - 1);
+      _blinkEye = null;
+    }
+    if (!widget.blink) return;
+    _blinkTimer = Timer(Duration(milliseconds: 2500 + _rnd.nextInt(4000)), _blinkStep);
+  }
+
+  void _blinkStep([int step = 0]) {
+    if (!mounted) return;
+    const eyes = [0.45, 0.06, 0.45];
+    if (step == 0) {
+      // وحدة ثانية رامشة الحين: ننتظر لين تخلص (ما يرمشون مع بعض أبد)
+      if (_blinkingNow > 0) {
+        _blinkTimer = Timer(Duration(milliseconds: 250 + _rnd.nextInt(400)), _blinkStep);
+        return;
+      }
+      _blinkingNow++;
+    }
+    if (step >= eyes.length || _moving) {
+      _blinkingNow = max(0, _blinkingNow - 1);
+      setState(() => _blinkEye = null);
+      return _scheduleBlink();
+    }
+    setState(() => _blinkEye = eyes[step]);
+    _blinkTimer = Timer(const Duration(milliseconds: 50), () => _blinkStep(step + 1));
+  }
+
   @override
   void initState() {
     super.initState();
     if (_moving) _ticker.start();
+    _scheduleBlink();
   }
 
   @override
@@ -236,10 +279,13 @@ class _FaceState extends State<_Face> with SingleTickerProviderStateMixin {
       _ticker.start();
     }
     if (!_moving && _ticker.isActive) _ticker.stop();
+    if (widget.blink != old.blink) _scheduleBlink();
   }
 
   @override
   void dispose() {
+    if (_blinkEye != null) _blinkingNow = max(0, _blinkingNow - 1);
+    _blinkTimer?.cancel();
     _ticker.dispose();
     super.dispose();
   }
@@ -287,6 +333,8 @@ class _FaceState extends State<_Face> with SingleTickerProviderStateMixin {
       final nod = ((m - energy) * 0.012 + energy * 0.006) * fadeIn;
       return CustomPaint(painter: _FacePainter(look, mouth: m, brow: (energy * 1.6).clamp(0.0, 1.0) * fadeIn, eye: eye, headTilt: tilt, headNod: nod));
     }
+    // وقت الرمشة نرسمه مباشرة (150ms بس)، وبعدها يرجع للصورة الجاهزة
+    if (_blinkEye != null) return CustomPaint(painter: _FacePainter(look, mouth: m, eye: _blinkEye!));
     final painter = _FacePainter(look, mouth: m);
     if (m != 0) return CustomPaint(painter: painter);
     // وجه ساكت: صورة جاهزة (الوجه فيه مئات الأشكال). الرسم يطلع برا حدوده، والصورة مكبّرة 1.3

@@ -70,4 +70,26 @@ void main() {
       await tester.pump(const Duration(seconds: 1));
     }
   });
+
+  testWidgets('search screen without countdown', (tester) async {
+    Sfx.muted = true;
+    addTearDown(tester.view.reset);
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    final c = _Client()
+      ..name = 'مهند'
+      ..connected = true
+      ..intro = false
+      ..searchEnds = DateTime.now().add(const Duration(seconds: 75))
+      ..room = {
+        't': 'room', 'code': '7777', 'mode': 6, 'started': false, 'search': true, 'winScore': 54, 'you': 0,
+        'seats': [{'name': 'مهند', 'bot': false, 'connected': true, 'char': 'aslam'}, {'name': 'سالم', 'bot': false, 'connected': true, 'char': 'wadamtih'}, null, null, null, null],
+      };
+    await tester.pumpWidget(RepaintBoundary(key: const ValueKey('shot'), child: KoutApp(key: const ValueKey('search'), client: c)));
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.textContaining('1:1'), findsNothing); // ما فيه وقت
+    await _shot(tester, 'build/preview_search.png');
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(seconds: 1));
+  });
 }
