@@ -117,6 +117,9 @@ class _CoinFlightState extends State<_CoinFlight> with SingleTickerProviderState
 
 String _after(Duration d) => d.inHours >= 1 ? trf('بعد {0} ساعة', [d.inHours]) : trf('بعد {0} دقيقة', [max(1, d.inMinutes)]);
 
+/// مقاس خانتي هدية اليوم و«شاهد إعلان» (نفس الشي للثنتين، وصغار عشان ما يزاحمون الشعار)
+const double sideBoxWidth = 104, sideBoxHeight = 34;
+
 /// خانة هدية اليوم تحت الرصيد: تلمع وتنط لين يضغطها اللاعب، وبعدها تقول متى الجاية (24 ساعة من استلامه).
 /// كل 30 ثانية وهي ظاهرة تحدّث الوقت الباقي، وتفتح الهدية لو خلص
 class GiftBox extends StatefulWidget {
@@ -154,27 +157,29 @@ class _GiftBoxState extends State<GiftBox> {
           return GestureDetector(
             onTap: ready ? widget.onTap : null,
             child: Container(
-              padding: const EdgeInsets.fromLTRB(8, 4, 8, 4),
+              width: sideBoxWidth,
+              height: sideBoxHeight,
+              padding: const EdgeInsets.fromLTRB(6, 2, 6, 2),
               decoration: BoxDecoration(
                 color: ready ? const Color(0xFF2A1F05) : const Color(0xFF111111),
-                borderRadius: BorderRadius.circular(14),
+                borderRadius: BorderRadius.circular(12),
                 border: Border.all(color: ready ? const Color(0xFFFFD65A) : const Color(0xFF8A8D92), width: 2),
                 boxShadow: ready ? const [BoxShadow(color: Color(0x99FFD65A), blurRadius: 12)] : null,
               ),
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                Bob(phase: 0.1, lift: ready ? 3 : 0, child: Icon(Icons.card_giftcard, size: 19, color: ready ? const Color(0xFFFFD65A) : const Color(0xFF8A8D92))),
+              child: FittedBox(fit: BoxFit.scaleDown, alignment: AlignmentDirectional.centerStart, child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Bob(phase: 0.1, lift: ready ? 3 : 0, child: Icon(Icons.card_giftcard, size: 16, color: ready ? const Color(0xFFFFD65A) : const Color(0xFF8A8D92))),
                 const SizedBox(width: 6),
                 Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text(ready ? tr('هدية اليوم') : tr('الهدية الجاية'), style: TextStyle(fontFamily: 'ElMessiri', fontSize: 11.5, height: 1.15, fontWeight: FontWeight.w700, color: ready ? Colors.white : const Color(0xFFAAAAAA))),
+                  Text(ready ? tr('هدية اليوم') : tr('الهدية الجاية'), style: TextStyle(fontFamily: 'ElMessiri', fontSize: 10.5, height: 1.15, fontWeight: FontWeight.w700, color: ready ? Colors.white : const Color(0xFFAAAAAA))),
                   ready
                       ? Row(mainAxisSize: MainAxisSize.min, children: [
-                          GhawaziIcon(size: 11.5),
+                          GhawaziIcon(size: 10),
                           SizedBox(width: 3),
-                          Text(trf('+{0} استلمها', [Wallet.dailyGift]), style: TextStyle(fontFamily: 'ElMessiri', fontSize: 10.5, height: 1.15, color: Color(0xFFFFD65A))),
+                          Text(trf('+{0} استلمها', [Wallet.dailyGift]), style: TextStyle(fontFamily: 'ElMessiri', fontSize: 9.5, height: 1.15, color: Color(0xFFFFD65A))),
                         ])
-                      : Text(when, style: const TextStyle(fontFamily: 'ElMessiri', fontSize: 10.5, height: 1.15, color: Color(0xFFAAAAAA))),
+                      : Text(when, style: const TextStyle(fontFamily: 'ElMessiri', fontSize: 9.5, height: 1.15, color: Color(0xFFAAAAAA))),
                 ]),
-              ]),
+              ])),
             ),
           );
         },
@@ -196,26 +201,28 @@ class AdBox extends StatelessWidget {
           return GestureDetector(
             onTap: ready ? onTap : null,
             child: Container(
-              padding: const EdgeInsets.fromLTRB(8, 4, 8, 4),
+              width: sideBoxWidth,
+              height: sideBoxHeight,
+              padding: const EdgeInsets.fromLTRB(6, 2, 6, 2),
               decoration: BoxDecoration(
                 color: const Color(0xFF111111),
-                borderRadius: BorderRadius.circular(14),
+                borderRadius: BorderRadius.circular(12),
                 border: Border.all(color: ready ? Colors.white : const Color(0xFF8A8D92), width: 2),
               ),
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                Bob(phase: 0.6, lift: ready ? 2.5 : 0, child: Icon(Icons.smart_display, size: 18, color: ready ? Colors.white : const Color(0xFF8A8D92))),
+              child: FittedBox(fit: BoxFit.scaleDown, alignment: AlignmentDirectional.centerStart, child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Bob(phase: 0.6, lift: ready ? 2.5 : 0, child: Icon(Icons.smart_display, size: 16, color: ready ? Colors.white : const Color(0xFF8A8D92))),
                 const SizedBox(width: 6),
                 Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text(tr('شاهد إعلان'), style: TextStyle(fontFamily: 'ElMessiri', fontSize: 11.5, height: 1.15, fontWeight: FontWeight.w700, color: ready ? Colors.white : const Color(0xFFAAAAAA))),
+                  Text(tr('شاهد إعلان'), style: TextStyle(fontFamily: 'ElMessiri', fontSize: 10.5, height: 1.15, fontWeight: FontWeight.w700, color: ready ? Colors.white : const Color(0xFFAAAAAA))),
                   ready
                       ? Row(mainAxisSize: MainAxisSize.min, children: [
-                          const GhawaziIcon(size: 11.5),
+                          const GhawaziIcon(size: 10),
                           const SizedBox(width: 3),
-                          Text(trf('+{0}  (باقي {1})', [Wallet.adReward, left]), style: const TextStyle(fontFamily: 'ElMessiri', fontSize: 10.5, height: 1.15, color: Color(0xFFFFE08A))),
+                          Text(trf('+{0}  (باقي {1})', [Wallet.adReward, left]), style: const TextStyle(fontFamily: 'ElMessiri', fontSize: 9.5, height: 1.15, color: Color(0xFFFFE08A))),
                         ])
-                      : Text(_after(w.untilNextAd()), style: const TextStyle(fontFamily: 'ElMessiri', fontSize: 10.5, height: 1.15, color: Color(0xFFAAAAAA))),
+                      : Text(_after(w.untilNextAd()), style: const TextStyle(fontFamily: 'ElMessiri', fontSize: 9.5, height: 1.15, color: Color(0xFFAAAAAA))),
                 ]),
-              ]),
+              ])),
             ),
           );
         },

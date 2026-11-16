@@ -11,6 +11,7 @@ import 'coins.dart';
 import 'friends.dart';
 import 'fullscreen.dart';
 import 'intro.dart';
+import 'leaderboard.dart';
 import 'invite.dart';
 import 'menus.dart';
 import 'net.dart';
@@ -39,7 +40,7 @@ void main() async {
 const appFont = 'ElMessiri';
 
 /// رقم النسخة يطلع تحت الشاشة الرئيسية (نفس version في pubspec.yaml)
-const appVersion = '1.0.22';
+const appVersion = '1.0.23';
 
 class KoutApp extends StatefulWidget {
   final GameClient client;
@@ -463,8 +464,11 @@ class _HomeScreenState extends State<HomeScreen> {
   // الخيارات الأربعة على شكل ورق، والمتجر والتفضيلات أزرار صغيرة على الجنبين
   Widget _menu(GameClient c, BoxConstraints box) {
     final wide = box.maxWidth > box.maxHeight;
-    final logo = wide ? min(box.maxHeight * 0.3, 120.0) : min(box.maxHeight * 0.18, 150.0);
-    final free = box.maxHeight - logo - 90;
+    // بالطولي: الخانات اللي فوق (الرصيد والهدية والإعلان، والمتصدرين) والأزرار اللي تحت تاخذ مكان، فالوسط يبدأ تحتها
+    final top = wide ? 0.0 : 150.0, bottom = wide ? 0.0 : 70.0;
+    final h = box.maxHeight - top - bottom;
+    final logo = wide ? min(h * 0.3, 120.0) : min(h * 0.24, 150.0);
+    final free = h - logo - (wide ? 90 : 50);
     final w = min(wide ? min((box.maxWidth - 72) / 4, free / cardRatio) : min((box.maxWidth - 40) / 2, (free - 12) / 2 / cardRatio), 240.0) * (wide ? 0.72 : 0.62);
     final cards = [
       MenuCard(width: w, suit: 'S', ring: 6, title: tr('6 لاعبين'), subtitle: tr('العب أونلاين'), onTap: () => _choosePlayers(6)),
@@ -472,9 +476,13 @@ class _HomeScreenState extends State<HomeScreen> {
       MenuCard(width: w, suit: 'C', icon: Icons.vpn_key, title: tr('غرفة مخصصة'), subtitle: tr('ولّف ربعك بكود الغرفة'), onTap: () => setState(() => _page = _Page.custom)),
       MenuCard(width: w, suit: 'H', icon: Icons.school, title: tr('تدريب'), subtitle: tr('تمرّن مع البوتات بدون وقت'), onTap: () => setState(() => _page = _Page.practice)),
     ];
+    final sideScale = wide ? 1.0 : 1.2;
+    Widget side(Widget box) => SizedBox(width: sideBoxWidth * sideScale, height: sideBoxHeight * sideScale, child: FittedBox(child: box));
     return Stack(fit: StackFit.expand, children: [
       const MenuBackdrop(),
-      Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+      Padding(
+        padding: EdgeInsets.only(top: top, bottom: bottom),
+        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
       // الشعار وجنبه بروفايل اللاعب (شخصيته واسمه ومستواه)، الاثنين مع بعض بالنص
       Row(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.center, children: [
         AppLogo(size: logo, frame: 5 * w / 180), // نفس سماكة فريم الخيارات
@@ -493,6 +501,7 @@ class _HomeScreenState extends State<HomeScreen> {
       const SizedBox(height: 8),
       Text(trf('نسخة {0}', [appVersion]), textAlign: TextAlign.center, style: TextStyle(fontSize: 11, color: Color(0xFF4A4D52))),
       ]),
+      ),
       // تحت يمين: المتجر والتفضيلات. تحت يسار: التحديات وتاريخك
       PositionedDirectional(
         start: 10,
@@ -522,16 +531,18 @@ class _HomeScreenState extends State<HomeScreen> {
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           ListenableBuilder(listenable: Wallet.instance, builder: (_, _) => MenuChip(key: _balanceKey, child: GhawaziAmount(Wallet.instance.balance, label: true))),
           const SizedBox(height: 6),
-          GiftBox(key: _giftKey, onTap: _claimGift),
+          // بالطولي أكبر شوي (فيه مكان فوق)، وبالعرضي مقاسها الأصلي
+          side(GiftBox(key: _giftKey, onTap: _claimGift)),
           const SizedBox(height: 6),
-          AdBox(key: _adKey, onTap: _watchAd),
+          side(AdBox(key: _adKey, onTap: _watchAd)),
         ]),
       ),
-      // فوق على اليسار: الإعدادات بالزاوية، وجنبها الأصدقاء وملء الشاشة
+      // فوق على اليسار: الإعدادات بالزاوية، وجنبها الأصدقاء وملء الشاشة، وتحتهم المتصدرين (الثلاثة الأوائل)
       PositionedDirectional(
         top: 8,
         end: 8,
-        child: Row(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.center, children: [
+        child: Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+        Row(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.center, children: [
           if (Fullscreen.supported) ...[_fullscreenButton(), const SizedBox(width: 8)],
           FriendsButton(onTap: () => setState(() => _page = _Page.friends)),
           const SizedBox(width: 8),
@@ -540,6 +551,12 @@ class _HomeScreenState extends State<HomeScreen> {
             style: OutlinedButton.styleFrom(padding: const EdgeInsets.all(8), minimumSize: const Size(44, 44)),
             child: const Icon(Icons.settings, size: 22),
           )),
+        ]),
+        const SizedBox(height: 8),
+        LeaderboardBox(onTap: () {
+          Friends.instance.requestLeaderboard(); // آخر نسخة من السيرفر
+          setState(() => _page = _Page.leaderboard);
+        }),
         ]),
       ),
     ]);
@@ -768,6 +785,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   _Page.store => StorePage(focus: _storeFocus, onBack: () => setState(() => _page = _storeFocus == null ? _Page.menu : _Page.prefs)),
                   _Page.challenges => ChallengesPage(onBack: () => setState(() => _page = _Page.menu)),
                   _Page.history => HistoryPage(onBack: () => setState(() => _page = _Page.menu)),
+                  _Page.leaderboard => LeaderboardPage(onBack: () => setState(() => _page = _Page.menu)),
                   _Page.prefs => PrefsPage(
                       client: c,
                       onBack: () => setState(() => _page = _Page.menu),
@@ -784,7 +802,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
-enum _Page { account, menu, online, practice, custom, store, prefs, challenges, history, rules, friends, signals }
+enum _Page { account, menu, online, practice, custom, store, prefs, challenges, history, rules, friends, signals, leaderboard }
 
 class LobbyScreen extends StatelessWidget {
   final GameClient client;

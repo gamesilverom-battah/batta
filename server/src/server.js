@@ -7,6 +7,7 @@ const path = require('path');
 const { WebSocketServer } = require('ws');
 const E = require('./engine');
 const Bot = require('./bot');
+const { createBoard } = require('./leaderboard');
 
 const PORT = Number(process.env.PORT ?? 8080);
 const BOT_DELAY_MS = Number(process.env.BOT_DELAY_MS ?? 900);
@@ -35,6 +36,10 @@ const CHARACTERS = [
   { id: 'sulaiman', name: 'سليمان' },
   { id: 'medhat', name: 'مدحت' },
 ];
+
+// المتصدرين: ينحفظون بملف (DATA_DIR)، والقائمة تنحسب كل 3 ساعات
+const board = createBoard({ file: path.join(process.env.DATA_DIR || path.join(__dirname, '..', 'data'), 'leaderboard.json') });
+board.schedule();
 
 const rooms = new Map(); // code -> room
 const searching = new Map(); // `${mode}-${score}` -> الغرفة اللي تدور لاعبين
@@ -211,7 +216,7 @@ function presenceOf(fc) {
 }
 
 // ملخص اللاعب اللي يبينه الباقين لما يضغطون على شخصيته (من «تاريخك» عنده): أرقام بس
-const PROFILE_KEYS = ['level', 'matches', 'wins', 'losses', 'rounds', 'bought', 'boughtMade', 'bigBidMade', 'bawanMade', 'bawanFailed', 'bawanBroken', 'points'];
+const PROFILE_KEYS = ['level', 'matches', 'wins', 'losses', 'rounds', 'bought', 'boughtMade', 'bigBidMade', 'bawanMade', 'bawanFailed', 'bawanBroken', 'points', 'xpDay', 'xpWeek'];
 function cleanProfile(p) {
   if (!p || typeof p !== 'object') return undefined;
   const out = {};
@@ -228,7 +233,15 @@ function handle(ws, msg) {
   if (msg.profile) ctx.profile = cleanProfile(msg.profile);
   if (msg.name) ctx.name = cleanName(msg.name);
   if (msg.char && CHARACTERS.some((c) => c.id === msg.char)) ctx.char = msg.char;
+  // خبرة اليوم والأسبوع للمتصدرين (مع الدخول وبعد كل مباراة)
+  if (msg.profile && ctx.fc && ctx.name && ctx.profile && 'xpDay' in ctx.profile) {
+    board.update(ctx.fc, { name: ctx.name, char: ctx.char, xpDay: ctx.profile.xpDay, xpWeek: ctx.profile.xpWeek });
+  }
   switch (msg.t) {
+    case 'leaderboard': // القائمتين وترتيبي
+      return send(ws, board.view(ctx.fc));
+    case 'xp': // خبرتي تغيرت (بعد مباراة)، ينحفظ فوق
+      return;
     case 'hello': // اتصال الحضور من القوائم
       ctx.presence = true;
       return send(ws, { t: 'hello' });

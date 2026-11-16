@@ -9,6 +9,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'i18n.dart';
+import 'leaderboard.dart';
+import 'progress.dart';
 import 'avatars.dart';
 import 'menus.dart';
 import 'sounds.dart';
@@ -94,7 +96,8 @@ class Friends extends ChangeNotifier {
   // ويستقبل الدعوات لغرف الأصدقاء
   WebSocketChannel? _ch;
   StreamSubscription? _sub;
-  Timer? _poll, _retry;
+  Timer? _poll, _retry, _xpSoon, _boardPoll;
+  bool _watchingXp = false;
   String _url = '', _name = '';
   String? _char;
 
@@ -124,8 +127,12 @@ class Friends extends ChangeNotifier {
       if (_ch != ch) return;
       _hello();
       refresh();
+      requestLeaderboard();
       _poll?.cancel();
       _poll = Timer.periodic(const Duration(seconds: 15), (_) => refresh());
+      // القائمة تتحدث بالسيرفر كل 3 ساعات، فنسأل كل 10 دقايق بس
+      _boardPoll?.cancel();
+      _boardPoll = Timer.periodic(const Duration(minutes: 10), (_) => requestLeaderboard());
     }).catchError((_) {
       if (_ch == ch) _drop();
     });
@@ -140,6 +147,7 @@ class Friends extends ChangeNotifier {
     _ch = null;
     _sub?.cancel();
     _poll?.cancel();
+    _boardPoll?.cancel();
     if (status.isNotEmpty) {
       status.clear();
       notifyListeners();
@@ -158,7 +166,23 @@ class Friends extends ChangeNotifier {
     } catch (_) {}
   }
 
-  void _hello() => _send({'t': 'hello', 'fc': myCode, 'name': _name, 'char': ?_char});
+  // مع السلام نرسل خبرتي باليوم والأسبوع (للمتصدرين)، وبعد كل مباراة نرسلها من جديد
+  void _hello() {
+    _send({'t': 'hello', 'fc': myCode, 'name': _name, 'char': ?_char, 'profile': Progress.instance.publicProfile()});
+    if (!_watchingXp) {
+      _watchingXp = true;
+      Progress.instance.addListener(_xpChanged);
+    }
+  }
+
+  // الخبرة تتغير مع كل جولة، فنرسلها مرة وحدة بعد ما تهدا
+  void _xpChanged() {
+    _xpSoon?.cancel();
+    _xpSoon = Timer(const Duration(seconds: 3), () => _send({'t': 'xp', 'fc': myCode, 'name': _name, 'char': ?_char, 'profile': Progress.instance.publicProfile()}));
+  }
+
+  /// نطلب المتصدرين (اليوم والأسبوع وترتيبي)
+  void requestLeaderboard() => _send({'t': 'leaderboard', 'fc': myCode});
 
   /// نسأل السيرفر مين من أصدقائي متصل
   void refresh() {
@@ -190,6 +214,8 @@ class Friends extends ChangeNotifier {
         });
         if (changed) _save();
         if (changed || !mapEquals(before, status)) notifyListeners();
+      case 'leaderboard':
+        Leaderboard.instance.fromServer(m);
       case 'invited':
         invite = (from: m['from'] as String? ?? tr('صديقك'), code: m['code'] as String);
         notifyListeners();

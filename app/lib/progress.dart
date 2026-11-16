@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -75,9 +76,24 @@ class Progress extends ChangeNotifier {
 
   // ---------- المستوى ----------
   // الخبرة من اللعب: كل مباراة 20، كل فوز 30 زيادة، كل جولة 2، وكل باون 50.
-  // المستوى 2 يبي 100 خبرة، و3 يبي 300، و4 يبي 600 ... (كل مستوى أطول من اللي قبله بـ 100)
-  int get xp => value('matches') * 20 + value('wins') * 30 + value('rounds') * 2 + value('bawanMade') * 50;
-  static int xpFor(int level) => 50 * level * (level - 1); // الخبرة اللازمة لبداية المستوى
+  static int xpOf(Map<String, int> s) => (s['matches'] ?? 0) * 20 + (s['wins'] ?? 0) * 30 + (s['rounds'] ?? 0) * 2 + (s['bawanMade'] ?? 0) * 50;
+  int get xp => xpOf(stats);
+
+  /// خبرة اليوم والأسبوع (أونلاين بس، مثل التحديات): عليها يمشي ترتيب المتصدرين
+  int get xpToday => xpOf(_daily);
+  int get xpWeek => xpOf(_weekly);
+
+  /// كل مستوى أصعب من اللي قبله: من المستوى L للي بعده تبي 100×L^1.5 خبرة (مقربة لعشرات):
+  /// 2 = 100، 3 = 380، 4 = 900، 5 = 1700، 6 = 2820، 10 = 11100، 20 = 67140
+  static int levelStep(int level) => (100 * pow(level, 1.5) / 10).round() * 10;
+  static final List<int> _starts = [0, 0]; // _starts[L] = الخبرة اللازمة لبداية المستوى L
+  static int xpFor(int level) {
+    while (_starts.length <= level) {
+      final l = _starts.length - 1;
+      _starts.add(_starts[l] + levelStep(l));
+    }
+    return _starts[level];
+  }
   int get level {
     var l = 1;
     while (xp >= xpFor(l + 1)) {
@@ -89,6 +105,8 @@ class Progress extends ChangeNotifier {
   /// ملخص يشوفه اللاعبين الثانين لما يضغطون على شخصيتي باللعب
   Map<String, int> publicProfile() => {
         'level': level,
+        'xpDay': xpToday, // للمتصدرين (اليوم والأسبوع) لما ننقل للسيرفر الجديد
+        'xpWeek': xpWeek,
         for (final k in const ['matches', 'wins', 'losses', 'rounds', 'bought', 'boughtMade', 'bigBidMade', 'bawanMade', 'bawanFailed', 'bawanBroken', 'points']) k: value(k),
       };
 
