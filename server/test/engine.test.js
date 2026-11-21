@@ -950,3 +950,68 @@ test('mate ruffed a side suit and the bot is void too: it leaves the trick to it
   s.hands[0] = ['S-12', 'S-3', 'S-9'];
   assert.strictEqual(Bot.decide(s, 0).card, 'S-3');
 });
+
+test('mate (buyer) leads the queen of trump: the bot plays its king, not the joker; joker only if an opponent beat the queen', () => {
+  const s = E.createMatch({ khabis: 5 });
+  Object.assign(s, { phase: 'playing', trump: 'S', currentBid: 6, buyer: 4, greyPlayed: true, trickNo: 3, turn: 0, played: [] });
+  // الشاري (4) زميل البوت (0) افتتح بالبنت (والخال ما نزل)، والخصم (5) رمى حكم أصغر، وباقي خصوم بعد البوت
+  s.hands[0] = ['S-13', E.BLUE, 'H-5', 'D-6', 'C-9', 'C-4', 'D-11'];
+  s.trick = [{ seat: 4, card: 'S-12' }, { seat: 5, card: 'S-4' }];
+  assert.strictEqual(Bot.decide(s, 0).card, 'S-13');
+  // الخصم غلب البنت بالخال: الحين يرمي الجوكر
+  s.trick = [{ seat: 4, card: 'S-12' }, { seat: 5, card: 'S-14' }];
+  assert.strictEqual(Bot.decide(s, 0).card, E.BLUE);
+  // ما عنده حكم والبنت تفوز: ما يضيّع الجوكر، يرمي أصغر ورقة
+  s.hands[0] = [E.BLUE, 'H-5', 'D-6', 'C-9', 'C-4', 'D-11', 'H-12'];
+  s.trick = [{ seat: 4, card: 'S-12' }, { seat: 5, card: 'S-4' }];
+  assert.strictEqual(Bot.decide(s, 0).card, 'C-4');
+});
+
+test('mate ruffed and is winning: the bot does not throw the big joker over it (unless it could get stuck with it soon)', () => {
+  const s = E.createMatch({ khabis: 5 });
+  Object.assign(s, { phase: 'playing', trump: 'D', currentBid: 6, buyer: 2, greyPlayed: true, trickNo: 3, turn: 0, played: [] });
+  // الخصم (3) افتتح هاس، زميله (4) قطع بحكم، والبوت ما عنده هاس، ورقه كبير (خطر الكبير) بس باقي معه 6 أوراق
+  s.hands[0] = ['D-14', E.BLUE, 'D-13', 'S-13', 'D-12', 'C-14'];
+  s.trick = [{ seat: 3, card: 'H-10' }, { seat: 4, card: 'D-8' }, { seat: 5, card: 'H-4' }];
+  assert.strictEqual(Bot.decide(s, 0).card, 'S-13');
+  // باقي معه 3 أوراق كلها كبار: الحين يرميه عشان ما يخيسه
+  s.hands[0] = ['D-14', E.BLUE, 'C-14'];
+  assert.strictEqual(Bot.decide(s, 0).card, E.BLUE);
+});
+
+test('no signals: bids start at 5, forced is «5 مجبور» (5 points win or lose), a failed 5 gives 10', () => {
+  const s = E.createMatch({ khabis: 2, signals: false });
+  assert.deepStrictEqual(E.legalBids(s, 3), ['pass', 5, 6, 7, 8, 9]);
+  assert.strictEqual(E.viewFor(s, 3).minBid, 5);
+  for (const seat of [3, 4, 5, 0, 1]) E.bid(s, seat, 'pass');
+  E.bid(s, 2, E.MAJBUR);
+  assert.strictEqual(s.currentBid, 5);
+  assert.strictEqual(s.majbur, true);
+  // مع إشارة: مثل قبل (من 6)
+  const t = E.createMatch({ khabis: 2 });
+  assert.deepStrictEqual(E.legalBids(t, 3), ['pass', 6, 7, 8, 9]);
+  assert.strictEqual(E.viewFor(t, 3).minBid, 6);
+  // 5 ما جابها: الخصم ياخذ 10، والمجبور 5 بس
+  const u = E.createMatch({ khabis: 2, signals: false });
+  E.bid(u, 3, 5);
+  for (const seat of [4, 5, 0, 1, 2]) E.bid(u, seat, 'pass');
+  const opp = 1 - E.teamOf(3);
+  u.phase = 'playing'; u.greyPlayed = true; u.trickNo = 5; u.tricksWon = [0, 0]; u.tricksWon[opp] = 5;
+  E.resolveAfterTrick(u);
+  assert.deepStrictEqual([u.lastRound.type, u.lastRound.team, u.lastRound.points], ['failed', opp, 10]);
+});
+
+test('bot keeps its joker under a small mate trump when all opponents are out of trump', () => {
+  const s = E.createMatch({ khabis: 5 });
+  Object.assign(s, { phase: 'playing', trump: 'S', currentBid: 6, buyer: 2, greyPlayed: true, bluePlayed: false, trickNo: 3, turn: 0 });
+  s.hands[0] = [E.BLUE, 'S-4', 'H-9', 'H-2'];
+  s.played = ['S-14', 'H-6', 'S-6', 'D-7', 'S-7', 'C-9', E.GREY];
+  // الزميل (الشاري) افتتح بأصغر حكم
+  s.trick = [{ seat: 2, card: 'S-3' }, { seat: 3, card: 'H-5' }, { seat: 4, card: 'D-2' }, { seat: 5, card: 'C-4' }];
+  // لمّة قبل افتتحت بحكم والخصوم (1، 3، 5) رموا غير الحكم: خلص حكمهم
+  s.tricks = [{ cards: [{ seat: 2, card: 'S-14' }, { seat: 3, card: 'H-6' }, { seat: 4, card: 'S-6' }, { seat: 5, card: 'D-7' }, { seat: 0, card: 'S-7' }, { seat: 1, card: 'C-9' }], winner: 2 }];
+  assert.strictEqual(Bot.decide(s, 0).card, 'S-4');
+  // وإذا واحد من الخصوم ممكن عنده حكم: ممكن يرمي الجوكر مثل قبل
+  s.tricks[0].cards[5].card = 'S-9';
+  assert.notStrictEqual(Bot.decide(s, 0).card, 'H-9');
+});

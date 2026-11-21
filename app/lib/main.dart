@@ -11,12 +11,14 @@ import 'coins.dart';
 import 'friends.dart';
 import 'fullscreen.dart';
 import 'intro.dart';
+import 'game_prompts.dart';
 import 'leaderboard.dart';
 import 'invite.dart';
 import 'menus.dart';
 import 'net.dart';
 import 'progress.dart';
 import 'progress_pages.dart';
+import 'room_link.dart';
 import 'rules_page.dart';
 import 'sounds.dart';
 import 'store.dart';
@@ -30,6 +32,11 @@ void main() async {
   await Progress.instance.load();
   await Friends.instance.load();
   await client.loadPrefs();
+  // رابط غرفة: اللعبة تفتح على هالغرفة بس
+  if (kIsWeb) {
+    final room = Uri.base.queryParameters['room'];
+    if (room != null && RegExp(r'^\d{4}$').hasMatch(room)) client.linkRoom = room;
+  }
   client.startFriends(); // الأصدقاء: مين متصل، والدعوات (إذا فيه اسم)
   await Sfx.loadSettings();
   await Lang.instance.load();
@@ -40,7 +47,7 @@ void main() async {
 const appFont = 'ElMessiri';
 
 /// رقم النسخة يطلع تحت الشاشة الرئيسية (نفس version في pubspec.yaml)
-const appVersion = '1.0.23';
+const appVersion = '1.0.24';
 
 class KoutApp extends StatefulWidget {
   final GameClient client;
@@ -113,6 +120,8 @@ class _KoutAppState extends State<KoutApp> {
               textDirection: Lang.instance.en ? TextDirection.ltr : TextDirection.rtl,
               child: Stack(fit: StackFit.expand, children: [
                 KeyedSubtree(key: ValueKey(Lang.instance.en), child: child!),
+                // «ترجع للدور؟» و«تدخل الدور الشغّال؟» و«اسمك طويل»: فوق كل شي
+                if (!_intro) GamePrompts(client: client),
                 if (_intro) LogoIntro(onDone: () => setState(() => _intro = false)),
               ]),
             ),
@@ -123,7 +132,7 @@ class _KoutAppState extends State<KoutApp> {
         listenable: client,
         builder: (context, _) {
           final (id, screen) = client.room == null
-              ? ('home', HomeScreen(client: client))
+              ? (client.linkRoom != null ? ('link', RoomLinkScreen(client: client) as Widget) : ('home', HomeScreen(client: client)))
               : client.searching
                   ? ('search', SearchScreen(client: client))
                   : !client.started
@@ -287,6 +296,11 @@ class _HomeScreenState extends State<HomeScreen> {
   var _balanceKey = GlobalKey(), _giftKey = GlobalKey(), _adKey = GlobalKey(), _stakeBalanceKey = GlobalKey();
   var _searchKey = GlobalKey();
   _Page? _keysPage;
+  // انتقال القوائم: مكان آخر ضغطة (الشاشة تدخل منه)، وإذا الصفحة الجديدة رجوع (أقرب للقائمة)
+  Offset? _tapAt;
+  _Page? _shownPage;
+  bool _back = false;
+  static int _depth(_Page p) => switch (p) { _Page.account || _Page.menu => 0, _Page.signals || _Page.rules => 2, _ => 1 };
   bool _coinsFlying = false;
 
   /// هدية اليوم: العملات تطير من الخانة للرصيد، والرصيد يزيد أول ما توصل
@@ -325,6 +339,10 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     // نجهّز الورق والأصوات من الشاشة الرئيسية، عشان ما تتأخر أول مرة تظهر باللعب
+    // كان بدور (فصل عليه النت، أو انقفلت اللعبة، أو طلع): نسأله يرجع
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) widget.client.checkRejoin();
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (Sfx.muted || !mounted) return;
       precacheImage(matImage, context);
@@ -432,7 +450,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   textAlign: TextAlign.center,
                   style: const TextStyle(fontSize: 20, color: Colors.white),
                   decoration: InputDecoration(labelText: tr('اسمك'), counterText: '', isDense: true),
-                  maxLength: 20,
+                  maxLength: GameClient.nameMax,
                   onSubmitted: (_) => enter(),
                 ),
               ),
@@ -465,11 +483,12 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _menu(GameClient c, BoxConstraints box) {
     final wide = box.maxWidth > box.maxHeight;
     // بالطولي: الخانات اللي فوق (الرصيد والهدية والإعلان، والمتصدرين) والأزرار اللي تحت تاخذ مكان، فالوسط يبدأ تحتها
-    final top = wide ? 0.0 : 150.0, bottom = wide ? 0.0 : 70.0;
-    final h = box.maxHeight - top - bottom;
-    final logo = wide ? min(h * 0.3, 120.0) : min(h * 0.24, 150.0);
+    // بالعرضي: الخيارات مرفوعة شوي عن الأزرار اللي تحت (بدون ما تصغر)
+    final top = wide ? 0.0 : 150.0, bottom = wide ? 34.0 : 70.0;
+    final h = box.maxHeight - top - (wide ? 0.0 : bottom);
+    final logo = wide ? min(h * 0.3, 120.0) : min(h * 0.19, 125.0);
     final free = h - logo - (wide ? 90 : 50);
-    final w = min(wide ? min((box.maxWidth - 72) / 4, free / cardRatio) : min((box.maxWidth - 40) / 2, (free - 12) / 2 / cardRatio), 240.0) * (wide ? 0.72 : 0.62);
+    final w = min(wide ? min((box.maxWidth - 72) / 4, free / cardRatio) : min((box.maxWidth - 40) / 2, (free - 12) / 2 / cardRatio), 240.0) * (wide ? 0.8 : 0.74);
     final cards = [
       MenuCard(width: w, suit: 'S', ring: 6, title: tr('6 لاعبين'), subtitle: tr('العب أونلاين'), onTap: () => _choosePlayers(6)),
       MenuCard(width: w, suit: 'D', ring: 4, title: tr('4 لاعبين'), subtitle: tr('العب أونلاين'), onTap: () => _choosePlayers(4)),
@@ -485,14 +504,18 @@ class _HomeScreenState extends State<HomeScreen> {
         child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
       // الشعار وجنبه بروفايل اللاعب (شخصيته واسمه ومستواه)، الاثنين مع بعض بالنص
       Row(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.center, children: [
-        AppLogo(size: logo, frame: 5 * w / 180), // نفس سماكة فريم الخيارات
+        // متصدرين اليوم مكان الشعار وبنفس مقاسه
+        LeaderboardBox(size: logo, onTap: () {
+          Friends.instance.requestLeaderboard(); // آخر نسخة من السيرفر
+          setState(() => _page = _Page.leaderboard);
+        }),
         SizedBox(width: logo * 0.12),
-        ProfileCard(name: c.name, char: c.char, height: logo, onTap: () => setState(() => _page = _Page.prefs)),
+        ProfileCard(name: c.name, char: c.char, height: logo, onTap: () => setState(() => _page = _Page.history)), // بروفايلك يفتح تاريخك
       ]),
       if (c.connecting) _connecting(),
       SizedBox(height: wide ? 10 : 18),
       if (wide)
-        Row(mainAxisAlignment: MainAxisAlignment.center, children: [for (final card in cards) Padding(padding: const EdgeInsets.symmetric(horizontal: 6), child: card)])
+        Row(mainAxisAlignment: MainAxisAlignment.center, children: [for (final card in cards) Padding(padding: const EdgeInsets.symmetric(horizontal: 11), child: card)])
       else ...[
         Row(mainAxisAlignment: MainAxisAlignment.center, children: [cards[0], const SizedBox(width: 12), cards[1]]),
         const SizedBox(height: 12),
@@ -502,7 +525,7 @@ class _HomeScreenState extends State<HomeScreen> {
       Text(trf('نسخة {0}', [appVersion]), textAlign: TextAlign.center, style: TextStyle(fontSize: 11, color: Color(0xFF4A4D52))),
       ]),
       ),
-      // تحت يمين: المتجر والتفضيلات. تحت يسار: التحديات وتاريخك
+      // تحت يمين: المتجر والتفضيلات. تحت يسار: التحديات (المتصدرين مكان الشعار، وتاريخك من البروفايل)
       PositionedDirectional(
         start: 10,
         bottom: 8,
@@ -515,13 +538,11 @@ class _HomeScreenState extends State<HomeScreen> {
       PositionedDirectional(
         end: 10,
         bottom: 8,
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
+        child: Row(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.end, children: [
           ListenableBuilder(
             listenable: Progress.instance,
             builder: (_, _) => SideButton(icon: Icons.flag, label: tr('التحديات'), phase: 0.5, dot: Progress.instance.anyToClaim, onTap: () => setState(() => _page = _Page.challenges)),
           ),
-          const SizedBox(width: 10),
-          SideButton(icon: Icons.military_tech, label: tr('تاريخك'), phase: 0.75, onTap: () => setState(() => _page = _Page.history)),
         ]),
       ),
       // رصيد الغوازي، وتحته خانة هدية اليوم
@@ -537,7 +558,7 @@ class _HomeScreenState extends State<HomeScreen> {
           side(AdBox(key: _adKey, onTap: _watchAd)),
         ]),
       ),
-      // فوق على اليسار: الإعدادات بالزاوية، وجنبها الأصدقاء وملء الشاشة، وتحتهم المتصدرين (الثلاثة الأوائل)
+      // فوق على اليسار: الإعدادات بالزاوية، وجنبها الأصدقاء وملء الشاشة
       PositionedDirectional(
         top: 8,
         end: 8,
@@ -552,11 +573,6 @@ class _HomeScreenState extends State<HomeScreen> {
             child: const Icon(Icons.settings, size: 22),
           )),
         ]),
-        const SizedBox(height: 8),
-        LeaderboardBox(onTap: () {
-          Friends.instance.requestLeaderboard(); // آخر نسخة من السيرفر
-          setState(() => _page = _Page.leaderboard);
-        }),
         ]),
       ),
     ]);
@@ -726,10 +742,20 @@ class _HomeScreenState extends State<HomeScreen> {
               const SizedBox(height: 10),
               if (c.connecting) _connecting(),
               Pressable(child: FilledButton(
-                onPressed: c.connecting ? null : withTap(() { if (_apply()) c.createRoom(); }),
+                onPressed: c.connecting ? null : withTap(() {
+                  if (!_apply()) return;
+                  if (Wallet.instance.balance < customMinStake) {
+                    c.error = trf('غوازيك ما تكفي لهالغرفة (الدخول {0})', [customMinStake]);
+                    setState(() {});
+                    return;
+                  }
+                  c.createRoom();
+                }),
                 style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14)),
                 child: Text(tr('سوّ غرفة جديدة'), style: TextStyle(fontSize: 19)),
               )),
+              const SizedBox(height: 4),
+              Text(trf('الدخول من {0} غوازي، والفايز ياخذ 70% زيادة', [customMinStake]), textAlign: TextAlign.center, style: const TextStyle(fontSize: 12, color: KoutColors.ink)),
               const SizedBox(height: 12),
               MenuPanel(
                 child: Row(children: [
@@ -767,12 +793,22 @@ class _HomeScreenState extends State<HomeScreen> {
       _stakeBalanceKey = GlobalKey();
       _searchKey = GlobalKey();
     }
+    if (_shownPage != _page) {
+      _back = _shownPage != null && _depth(_page) < _depth(_shownPage!);
+      _shownPage = _page;
+    }
     return Scaffold(
       body: ChromeBackground(
         child: SafeArea(
           child: Stack(fit: StackFit.expand, children: [
-          PageSwitcher(
+          Listener(
+            behavior: HitTestBehavior.translucent,
+            onPointerDown: (e) => _tapAt = e.localPosition,
+            child: PageSwitcher(
             id: _page,
+            zoom: true,
+            back: _back,
+            origin: _tapAt,
             child: LayoutBuilder(builder: (context, box) => switch (_page) {
                   _Page.account => _account(c, box),
                   _Page.menu => _menu(c, box),
@@ -792,7 +828,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       onStore: (item) => _openStore(item),
                     ),
                 }),
-          ),
+          )),
           // دعوة من صديق لغرفته: تطلع فوق أي صفحة
           InviteBanner(onJoin: (code) => c.joinRoom(code)),
           ]),
@@ -905,6 +941,40 @@ class LobbyScreen extends StatelessWidget {
       child: Row(mainAxisSize: MainAxisSize.min, children: [signalButton(true, tr('مع إشارة')), signalButton(false, tr('بدون إشارة'))]),
     );
 
+    // مبلغ الدخول (الغرفة المخصصة بالغوازي): المضيف يختار، والمبلغ اللي فوق رصيده ما يقدر يختاره
+    final stakes = ((c.room?['stakes'] as List?) ?? const []).cast<int>();
+    final roomStake = c.room?['stake'] as int?;
+    Widget stakeButton(int v) {
+      final on = roomStake == v;
+      final can = Wallet.instance.balance >= v;
+      return Pressable(child: GestureDetector(
+        onTap: withTap(c.isHost && !on && can ? () => c.setRoomStake(v) : null),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 7, horizontal: 12),
+          color: on ? Colors.white : const Color(0xFF111111),
+          child: Opacity(
+            opacity: on || can || !c.isHost ? 1 : 0.4,
+            child: GhawaziAmount(v, size: 16, color: on ? Colors.black : Colors.white),
+          ),
+        ),
+      ));
+    }
+
+    final stakeToggle = stakes.isEmpty
+        ? null
+        : Column(mainAxisSize: MainAxisSize.min, children: [
+            Container(
+              clipBehavior: Clip.antiAlias,
+              decoration: BoxDecoration(borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.white, width: 2)),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [for (final v in stakes) stakeButton(v)]),
+            ),
+            if (roomStake != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: Text(trf('الدخول {0}  ·  تفوز {1}', [roomStake, (roomStake * (1 + Wallet.winBonus)).round()]), style: const TextStyle(fontSize: 11, color: KoutColors.ink)),
+              ),
+          ]);
+
     // تحت: عبّي بالبوتات، وابدأ
     final actions = c.isHost
         ? Row(children: [
@@ -946,12 +1016,12 @@ class LobbyScreen extends StatelessWidget {
                         Expanded(child: bar),
                         const SizedBox(width: 10),
                         // يصغر لو ما كفى المكان
-                        Flexible(flex: 3, child: FittedBox(fit: BoxFit.scaleDown, child: Row(mainAxisSize: MainAxisSize.min, children: [codeChip, const SizedBox(width: 10), mode, const SizedBox(width: 10), signalsToggle]))),
+                        Flexible(flex: 3, child: FittedBox(fit: BoxFit.scaleDown, child: Row(mainAxisSize: MainAxisSize.min, children: [codeChip, const SizedBox(width: 10), mode, const SizedBox(width: 10), signalsToggle, if (stakeToggle != null) ...[const SizedBox(width: 10), stakeToggle]]))),
                       ])
                     else ...[
                       bar,
                       const SizedBox(height: 10),
-                      Wrap(alignment: WrapAlignment.center, crossAxisAlignment: WrapCrossAlignment.center, spacing: 10, runSpacing: 8, children: [codeChip, mode, signalsToggle]),
+                      Wrap(alignment: WrapAlignment.center, crossAxisAlignment: WrapCrossAlignment.center, spacing: 10, runSpacing: 8, children: [codeChip, mode, signalsToggle, ?stakeToggle]),
                     ],
                     if (c.mode == 4)
                       Padding(
@@ -1002,10 +1072,11 @@ void _copy(BuildContext context, String text, String done) {
   ));
 }
 
-/// دعوة الربع: بالكود بس (بدون رابط، عشان عنوان السيرفر ما ينعرف)
+/// دعوة الربع: برابط الغرفة (يفتح هالغرفة بس، مو اللعبة كاملة)
 void showInvite(BuildContext context, GameClient c) {
   final code = c.code ?? '';
-  final text = trf('تعال العب معاي بتّه! ادخل «غرفة مخصصة» وحط الكود {0}', [code]);
+  final link = c.roomLink;
+  final text = trf('تعال العب معاي بتّه! ادخل الغرفة من هالرابط: {0}', [link]);
   Widget option(IconData icon, String label, Color color, VoidCallback onTap) => Expanded(
         child: Pressable(child: GestureDetector(
           onTap: withTap(onTap),
@@ -1034,12 +1105,12 @@ void showInvite(BuildContext context, GameClient c) {
         child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
           Text(tr('دعوة'), style: TextStyle(fontSize: 20, color: Colors.white, fontWeight: FontWeight.w700)),
           const SizedBox(height: 4),
-          Text(tr('ربعك يدخلون «غرفة مخصصة» ويحطون هالكود'), textAlign: TextAlign.center, style: TextStyle(fontSize: 13, color: Color(0xFFBBBBBB))),
+          Text(tr('أرسل الرابط لربعك: يفتحونه ويدخلون الغرفة على طول'), textAlign: TextAlign.center, style: TextStyle(fontSize: 13, color: Color(0xFFBBBBBB))),
           const SizedBox(height: 10),
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
             decoration: BoxDecoration(color: const Color(0xFF2A2C31), borderRadius: BorderRadius.circular(12)),
-            child: Text(code, style: const TextStyle(fontSize: 34, height: 1.15, fontWeight: FontWeight.w700, letterSpacing: 10, color: Color(0xFFFFE08A))),
+            child: Directionality(textDirection: TextDirection.ltr, child: Text(link, textAlign: TextAlign.center, style: const TextStyle(fontSize: 15, color: Color(0xFFFFE08A)))),
           ),
           const SizedBox(height: 12),
           // أصدقائي المتصلين: الدعوة توصلهم على طول
@@ -1048,9 +1119,9 @@ void showInvite(BuildContext context, GameClient c) {
           Row(children: [
             if (Invite.canShare) option(Icons.ios_share, tr('شارك'), const Color(0xFF3A6FD8), () => Invite.share(text)),
             if (Invite.canOpen) option(Icons.chat, tr('واتساب'), const Color(0xFF25A244), () => Invite.open('https://wa.me/?text=${Uri.encodeComponent(text)}')),
-            option(Icons.content_copy, tr('انسخ الدعوة'), const Color(0xFF555960), () {
+            option(Icons.content_copy, tr('انسخ الرابط'), const Color(0xFF555960), () {
               Navigator.pop(ctx);
-              _copy(context, text, tr('نسخت الدعوة'));
+              _copy(context, link, tr('نسخت الرابط'));
             }),
           ]),
         ])),

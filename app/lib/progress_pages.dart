@@ -5,6 +5,7 @@ import 'cards.dart';
 import 'coins.dart';
 import 'friends.dart';
 import 'i18n.dart';
+import 'level_badge.dart';
 import 'menus.dart';
 import 'net.dart';
 import 'progress.dart';
@@ -288,15 +289,8 @@ class ProfileCard extends StatelessWidget {
                 // الشخصية ورقم المستوى على طرفها
                 Stack(clipBehavior: Clip.none, children: [
                   CharacterAvatar(charId: char, size: avatar, ring: KoutColors.teamBlue, background: KoutColors.teamBlue, blink: true),
-                  PositionedDirectional(
-                    bottom: -4,
-                    end: -8,
-                    child: Container(
-                      padding: EdgeInsets.symmetric(horizontal: height * 0.05, vertical: 1),
-                      decoration: BoxDecoration(color: const Color(0xFFFFE08A), borderRadius: BorderRadius.circular(10), border: Border.all(color: const Color(0xFF111111), width: 2)),
-                      child: Text('${p.level}', style: TextStyle(fontSize: height * 0.11, height: 1.2, fontWeight: FontWeight.w800, color: Colors.black)),
-                    ),
-                  ),
+                  // شارة المستوى (نفس اللي تبين باللعب)
+                  PositionedDirectional(bottom: -4, end: -8, child: LevelBadge(level: p.level, size: height * 0.22)),
                 ]),
                 SizedBox(height: height * 0.05),
                 ConstrainedBox(

@@ -19,10 +19,13 @@ const MAJBUR_TALK_MS =Number(process.env.MAJBUR_TALK_MS ?? 1200); // وقت إض
 const TURN_MS =Number(process.env.TURN_MS ?? 12500); // وقت كل لاعب للمزايدة واللعب (12.5 ثانية)
 const TRUMP_MS = Number(process.env.TRUMP_MS ?? 10000); // وقت اختيار الحكم
 const SEARCH_MS = Number(process.env.SEARCH_MS ?? 90000); // أقصى وقت بحث عن لاعبين، وبعدها البوتات تكمّل
+const SUB_AFTER_MS = Number(process.env.SUB_AFTER_MS ?? 120000); // لاعب أونلاين فصل: بعد دقيقتين ندوّر بديل (والبوت يلعب مكانه من أول ما يفصل)
+const CANCEL_MS = Number(process.env.CANCEL_MS ?? 120000); // كل اللاعبين فصلوا: بعد دقيقتين ينلغي الدور (خسارة للكل)
+const NAME_MAX = 10; // أطول اسم (حروف وأرقام ومسافات ورموز)
 
 // الشخصيات: البوت ياخذ اسم الشخصية، واللاعب ياخذ وجهها ويبقى اسمه
 const CHARACTERS = [
-  { id: 'khalfan', name: 'خلفان التفق' },
+  { id: 'khalfan', name: 'خلفان' },
   { id: 'khusaib', name: 'خصيب' },
   { id: 'marhoon', name: 'مرهون' },
   { id: 'musabbah', name: 'سعيد' },
@@ -40,6 +43,9 @@ const CHARACTERS = [
 // المتصدرين: ينحفظون بملف (DATA_DIR)، والقائمة تنحسب كل 3 ساعات
 const board = createBoard({ file: path.join(process.env.DATA_DIR || path.join(__dirname, '..', 'data'), 'leaderboard.json') });
 board.schedule();
+
+// دخول الغرفة المخصصة بالغوازي: 70% من مبالغ الأونلاين (الدور الكامل 160/400، والسريع 100/250)، والمضيف يختار
+const CUSTOM_STAKES = { 54: [112, 280], 34: [70, 175] };
 
 const rooms = new Map(); // code -> room
 const searching = new Map(); // `${mode}-${score}` -> الغرفة اللي تدور لاعبين
@@ -99,8 +105,10 @@ function lobbyInfo(room) {
     searchMsLeft: room.search ? Math.max(0, room.searchEnds - Date.now()) : null,
     practice: room.practice,
     signals: room.signals,
+    stake: room.stake ?? null, // الغرفة المخصصة: مبلغ الدخول (والفايز ياخذه وفوقه 70%)
+    stakes: room.stake ? CUSTOM_STAKES[room.winScore] : null,
     // fc: كود الصداقة للاعب (عشان يقدر الباقين يضيفونه)
-    seats: room.seats.map((s) => s && { name: s.name, bot: s.bot, connected: s.bot || !!s.ws, char: s.char, fc: s.bot ? undefined : s.ws?.ctx?.fc, profile: s.bot ? undefined : s.ws?.ctx?.profile }),
+    seats: room.seats.map((s) => s && { name: s.name, bot: s.bot, connected: s.bot || !!s.ws, char: s.char, level: s.bot ? undefined : s.ws?.ctx?.profile?.level /* البوت بدون مستوى */, fc: s.bot ? undefined : s.ws?.ctx?.fc, profile: s.bot ? undefined : s.ws?.ctx?.profile }),
   };
 }
 
@@ -137,6 +145,14 @@ function schedule(room) {
   room.deadline = null;
   const g = room.game;
   if (!g) return;
+  // ما بقى أحد متصل (كلهم فصلوا): الدور يوقف، وإذا محد رجع (ولا دخل بديل) خلال دقيقتين ينلغي
+  room.paused = !room.practice && !room.seats.some((s) => s && !s.bot && s.ws);
+  if (room.paused) {
+    room.cancelTimer ??= setTimeout(() => cancelRoom(room), CANCEL_MS);
+    return;
+  }
+  clearTimeout(room.cancelTimer);
+  room.cancelTimer = null;
   if (g.phase === 'roundEnd') {
     room.timer = setTimeout(() => { E.nextRound(g); schedule(room); broadcast(room); }, NEXT_ROUND_MS);
     return;
@@ -155,7 +171,8 @@ function schedule(room) {
     schedule(room);
     broadcast(room);
   };
-  if (room.seats[seat]?.bot) {
+  // البوت، أو لاعب فصل عليه النت (البوت يلعب مكانه لين يرجع أو يجي بديل)
+  if (room.seats[seat]?.bot || isGone(room, room.seats[seat])) {
     room.timer = setTimeout(() => act({}), BOT_DELAY_MS + pause);
     return;
   }
@@ -180,6 +197,7 @@ function schedule(room) {
 function startSearched(room) {
   clearTimeout(room.searchTimer);
   searching.delete(room.search);
+  room.online = room.search; // دور أونلاين: البديل يجي من اللي يدوّرون بنفس الاختيارات
   room.search = null;
   room.searchEnds = null;
   room.seats.forEach((s, i) => { if (!s) room.seats[i] = newSeat(room, { bot: true }); });
@@ -191,6 +209,91 @@ function startSearched(room) {
 
 function seatOf(room, token) {
   return room.seats.findIndex((s) => s && s.token === token);
+}
+
+// ---------- الرجوع للدور والبديل ----------
+// لاعب فصل عليه النت والدور شغّال (مو تدريب): البوت يلعب مكانه
+function isGone(room, s) {
+  return !!(s && !s.bot && !s.ws && room.game && !room.practice);
+}
+
+function running(room) {
+  return !!(room.game && room.game.phase !== 'matchEnd');
+}
+
+/// فصل لاعب والدور شغّال: البوت مكانه على طول، وبالأونلاين بعد دقيقتين ندوّر بديل
+function seatGone(room, i) {
+  const s = room.seats[i];
+  s.ws = null;
+  if (!s.goneAt) emitAll(room, { t: 'seatEvent', kind: 'gone', seat: i, name: s.name }); // تنبيه للباقين
+  s.goneAt ??= Date.now();
+  if (room.online && !s.open && !s.subTimer) s.subTimer = setTimeout(() => { s.subTimer = null; openSeat(room, s); }, SUB_AFTER_MS);
+  if (actor(room.game) === i) schedule(room); // كان دوره: البوت يلعب على طول بدل ما ينتظر وقته
+}
+
+/// اللاعب رجع لمقعده
+function seatBack(room, i, ws) {
+  const s = room.seats[i];
+  if (s.goneAt && running(room) && !room.practice) emitAll(room, { t: 'seatEvent', kind: 'back', seat: i, name: s.name });
+  s.ws = ws;
+  s.goneAt = null;
+  s.open = false;
+  s.offeredTo = null;
+  clearTimeout(s.subTimer);
+  s.subTimer = null;
+  // دوره (ياخذ وقته كامل)، أو الدور كان واقف لأن ما أحد متصل
+  if (running(room) && !room.practice && (actor(room.game) === i || room.paused)) schedule(room);
+}
+
+/// المقعد صار مفتوح لبديل (الأونلاين بس)
+function openSeat(room, s) {
+  if (!room.online || !running(room) || !room.seats.includes(s) || s.ws || s.bot) return;
+  s.open = true;
+  s.declined ??= new Set();
+  offerSub(room, s);
+}
+
+/// نعرض المقعد على أول واحد يدوّر بنفس الاختيارات (وما رفضه قبل)
+function offerSub(room, s) {
+  if (!s.open || !running(room)) return;
+  if (s.offeredTo && s.offeredTo.readyState === s.offeredTo.OPEN) return; // ينتظر رده
+  s.offeredTo = null;
+  const q = searching.get(room.online);
+  const who = q && q.seats.find((x) => x && !x.bot && x.ws && !s.declined.has(x.ws));
+  if (who) sendSubOffer(room, s, who.ws);
+}
+
+function sendSubOffer(room, s, ws) {
+  s.offeredTo = ws;
+  const i = room.seats.indexOf(s);
+  send(ws, { t: 'subOffer', code: room.code, seat: i, mode: room.mode, winScore: room.winScore, scores: room.game.scores, team: i % 2 });
+}
+
+/// مقعد مفتوح بدور أونلاين بنفس الاختيارات (للي يبدأ يدوّر)
+function openSeatFor(key, ws) {
+  for (const room of rooms.values()) {
+    if (room.online !== key || !running(room)) continue;
+    const s = room.seats.find((x) => x && x.open && !x.ws && !x.declined.has(ws) && !(x.offeredTo && x.offeredTo.readyState === x.offeredTo.OPEN));
+    if (s) return { room, s };
+  }
+  return null;
+}
+
+/// الدور انلغى (كلهم فصلوا ومحد رجع): الغرفة تنشال، واللي يرجع ينحسب له خسارة
+function cancelRoom(room) {
+  clearTimeout(room.timer);
+  clearTimeout(room.cancelTimer);
+  room.seats.forEach((s) => s && clearTimeout(s.subTimer));
+  rooms.delete(room.code);
+}
+
+/// طلع من غرفة البحث (قبل ما تبدأ)
+function leaveSearch(room, i) {
+  room.seats[i] = null;
+  if (room.seats.some(Boolean)) return broadcast(room);
+  clearTimeout(room.searchTimer);
+  searching.delete(room.search);
+  rooms.delete(room.code);
 }
 
 // ---------- الأصدقاء ----------
@@ -265,6 +368,7 @@ function handle(ws, msg) {
     }
     case 'create': {
       const room = createRoom(E.PLAYERS, E.WIN_SCORE, msg.signals !== false);
+      room.stake = CUSTOM_STAKES[room.winScore][0];
       const seat = newSeat(room, { name: cleanName(msg.name), ws, want: msg.char });
       room.seats[0] = seat;
       room.host = seat.token;
@@ -274,11 +378,16 @@ function handle(ws, msg) {
     }
     case 'join': {
       const room = rooms.get(String(msg.code));
+      const back = room ? seatOf(room, msg.token) : -1;
+      // كان بالدور: دخل لاعب مكانه، أو خلص الدور وهو مو موجود
+      const lost = msg.token && room?.game && !room.practice && (back < 0 || (room.game.phase === 'matchEnd' && !room.seats[back].ws));
+      if (lost) return send(ws, { t: 'seatLost' });
+      if (!room && msg.token && msg.inGame) return send(ws, { t: 'seatLost', cancelled: true }); // انلغى
       if (!room) return send(ws, { t: 'error', msg: 'ما فيه غرفة بهالكود' });
-      if (msg.token && seatOf(room, msg.token) >= 0) {
+      if (msg.token && back >= 0) {
         // رجوع لاعب انقطع اتصاله
-        const s = room.seats[seatOf(room, msg.token)];
-        s.ws = ws; ctx.room = room; ctx.token = msg.token;
+        seatBack(room, back, ws);
+        ctx.room = room; ctx.token = msg.token;
         send(ws, { t: 'joined', code: room.code, token: msg.token });
         return broadcast(room);
       }
@@ -298,6 +407,11 @@ function handle(ws, msg) {
       // اللي اختاروا «بدون إشارة» يلعبون مع بعض بس
       const signals = msg.signals !== false;
       const key = `${mode}-${score}-${signals ? 'sig' : 'nosig'}`;
+      // فيه دور شغّال بنفس الاختيارات ناقصه لاعب: نسأله أول (وإذا رفض يرجع يدوّر عادي)
+      if (!msg.noSub) {
+        const open = openSeatFor(key, ws);
+        if (open) return sendSubOffer(open.room, open.s, ws);
+      }
       let room = searching.get(key);
       if (!room) {
         room = createRoom(mode, score, signals);
@@ -324,6 +438,62 @@ function handle(ws, msg) {
       ctx.room = room; ctx.token = seat.token;
       send(ws, { t: 'joined', code: room.code, token: seat.token });
       schedule(room);
+      return broadcast(room);
+    }
+    case 'rejoinCheck': { // فتح اللعبة وكان بدور: لسه مقعده له؟
+      const room = rooms.get(String(msg.code));
+      const i = room ? seatOf(room, msg.token) : -1;
+      const ok = i >= 0 && running(room) && !room.practice;
+      return send(ws, ok ? { t: 'rejoinInfo', ok, code: room.code, mode: room.mode, winScore: room.winScore, scores: room.game.scores, team: i % 2 } : { t: 'rejoinInfo', ok: false });
+    }
+    case 'forfeit': { // ما يبي يرجع: يخسر، والبوت يكمل لين يجي بديل
+      const room = rooms.get(String(msg.code));
+      const i = room ? seatOf(room, msg.token) : -1;
+      if (i >= 0 && running(room) && !room.practice) {
+        const s = room.seats[i];
+        s.token = crypto.randomUUID(); // ما يقدر يرجع
+        if (ctx.room === room) { ctx.room = null; ctx.token = null; }
+        if (!s.goneAt) emitAll(room, { t: 'seatEvent', kind: 'gone', seat: i, name: s.name });
+        s.ws = null;
+        s.goneAt ??= Date.now();
+        clearTimeout(s.subTimer);
+        s.subTimer = null;
+        if (actor(room.game) === i) schedule(room);
+        openSeat(room, s);
+        broadcast(room);
+      }
+      return send(ws, { t: 'forfeited' });
+    }
+    case 'subDecline': { // رفض يدخل الدور الشغّال
+      const room = rooms.get(String(msg.code));
+      const s = room && room.seats[Number(msg.seat)];
+      if (s && s.offeredTo === ws) {
+        s.offeredTo = null;
+        s.declined.add(ws);
+        offerSub(room, s);
+      }
+      return;
+    }
+    case 'subAccept': { // دخل بديل: بياناته هو، وياخذ أوراق المقعد ونقاط فريقه
+      const room = rooms.get(String(msg.code));
+      const i = Number(msg.seat);
+      const s = room && room.seats[i];
+      if (!s || !s.open || s.ws || !running(room) || s.offeredTo !== ws) return send(ws, { t: 'subGone' });
+      if (ctx.room && ctx.room !== room) {
+        if (ctx.room.game) return send(ws, { t: 'subGone' }); // بحثه بدأ دور ثاني
+        const j = seatOf(ctx.room, ctx.token);
+        if (j >= 0) leaveSearch(ctx.room, j);
+      }
+      clearTimeout(s.subTimer);
+      const others = room.seats.filter((x) => x && x !== s);
+      const want = CHARACTERS.find((c) => c.id === msg.char && !others.some((x) => x.char === c.id));
+      const ch = want || (others.some((x) => x.char === s.char) ? freeCharacter(room) : CHARACTERS.find((c) => c.id === s.char));
+      const seat = { name: cleanName(msg.name), token: crypto.randomUUID(), bot: false, ws, char: ch.id };
+      room.seats[i] = seat;
+      emitAll(room, { t: 'seatEvent', kind: 'sub', seat: i, name: seat.name, old: s.name }); // تنبيه للباقين (يوصل قبل ما ينضم البديل)
+      ctx.room = room; ctx.token = seat.token;
+      send(ws, { t: 'joined', code: room.code, token: seat.token });
+      if (actor(room.game) === i || room.paused) schedule(room);
       return broadcast(room);
     }
   }
@@ -372,6 +542,13 @@ function handle(ws, msg) {
       case 'signals': { // الغرفة المخصصة: المضيف يختار مع إشارة ميدان أو بدون
         if (!isHost || room.game) throw illegal('للمضيف قبل البداية');
         room.signals = msg.on !== false;
+        break;
+      }
+      case 'stake': { // الغرفة المخصصة: المضيف يختار مبلغ الدخول
+        if (!isHost || room.game) throw illegal('للمضيف قبل البداية');
+        const v = Number(msg.value);
+        if (!(CUSTOM_STAKES[room.winScore] || []).includes(v)) throw illegal('مبلغ غير معروف');
+        room.stake = v;
         break;
       }
       case 'addBots':
@@ -428,7 +605,7 @@ function illegal(msg) {
 }
 
 function cleanName(name) {
-  return String(name || 'لاعب').trim().slice(0, 20) || 'لاعب';
+  return Array.from(String(name || 'لاعب').trim()).slice(0, NAME_MAX).join('').trim() || 'لاعب';
 }
 
 // اختياري: STATIC_DIR يخلي السيرفر يقدّم نسخة الويب من التطبيق (flutter build web)
@@ -466,16 +643,9 @@ wss.on('connection', (ws) => {
     if (!room) return;
     const i = seatOf(room, ws.ctx.token);
     if (i < 0 || room.seats[i].ws !== ws) return;
-    if (room.search) {
-      // طلع من البحث: إذا ما بقى أحد تنشال الغرفة
-      room.seats[i] = null;
-      if (room.seats.some(Boolean)) return broadcast(room);
-      clearTimeout(room.searchTimer);
-      searching.delete(room.search);
-      rooms.delete(room.code);
-      return;
-    }
-    if (room.game) room.seats[i].ws = null; // يبقى مقعده محجوز لين يرجع
+    if (room.search) return leaveSearch(room, i); // طلع من البحث: إذا ما بقى أحد تنشال الغرفة
+    if (running(room) && !room.practice) seatGone(room, i); // يبقى مقعده محجوز لين يرجع، والبوت يلعب مكانه
+    else if (room.game) room.seats[i].ws = null;
     else if (ws.ctx.token !== room.host) room.seats[i] = null;
     else room.seats[i].ws = null;
     broadcast(room);
@@ -493,4 +663,4 @@ setInterval(() => {
 
 server.listen(PORT, () => console.log(`kout server listening on :${PORT}`));
 
-module.exports = { server, rooms, schedule };
+module.exports = { server, rooms, schedule, cleanName };

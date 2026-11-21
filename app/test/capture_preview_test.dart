@@ -44,7 +44,7 @@ Map<String, dynamic> _biddingView() => _view()
   ..['bids'] = [{'seat': 1, 'bid': 'pass'}, {'seat': 2, 'bid': 7}, {'seat': 3, 'bid': 'pass'}, {'seat': 4, 'bid': 'pass'}, {'seat': 5, 'bid': 'pass'}];
 
 /// result: 'made' أو 'failed' يصوّر لحظة نهاية الجولة (الطاولة خضراء/حمراء)
-Future<void> _capture(WidgetTester tester, Size size, String out, {String? result, bool bidding = false, bool signals = false, String? throwCard, ({bool won, int amount})? stake, bool noSignals = false}) async {
+Future<void> _capture(WidgetTester tester, Size size, String out, {String? result, bool bidding = false, bool signals = false, String? throwCard, ({bool won, int amount})? stake, bool noSignals = false, Map<String, dynamic>? patch, int? revealMs, String? framesDir, String? note}) async {
   tester.view.physicalSize = size * 2;
   tester.view.devicePixelRatio = 2;
   final c = _Client()
@@ -52,11 +52,14 @@ Future<void> _capture(WidgetTester tester, Size size, String out, {String? resul
     ..room = {
       't': 'room', 'code': '1234', 'mode': 6, 'started': true, 'you': 0, 'isHost': true,
       'seats': [
-        for (final (n, ch) in [('مهند', 'musabbah'), ('خصيب', 'khusaib'), ('مرهون', 'marhoon'), ('بو حمدان', 'buhamdan'), ('خلفان التفق', 'khalfan'), ('ود عمتيه', 'wadamtih')])
-          {'name': n, 'bot': n != 'مهند', 'connected': true, 'char': ch},
+        for (final (n, ch, lv) in [('مهند', 'musabbah', 3), ('خصيب', 'khusaib', 14), ('مرهون', 'marhoon', null), ('بو حمدان', 'buhamdan', 57), ('خلفان', 'khalfan', null), ('ود عمتيه', 'wadamtih', 72)])
+          {'name': n, 'bot': lv == null, 'connected': n != 'خصيب', 'char': ch, 'level': lv},
       ],
     }
-    ..view = ((bidding ? _biddingView() : _view())..['signals'] = !noSignals);
+    ..view = ((bidding ? _biddingView() : _view())..['signals'] = !noSignals..addAll(patch ?? const {}));
+  if (note != null) c.seatNote = (text: note, at: DateTime.now());
+  // اختيار الحكم: نبدأ والشاري يختار، وبعدها يوصل الحكم ونصوّر بعد revealMs
+  if (revealMs != null) c.view = c.view!..['phase'] = 'trump'..['trump'] = null..['trick'] = []..['legalCards'] = [];
   if (signals) {
     const sent = [['H'], ['S', 'D'], ['C'], ['D', 'H', 'S'], ['J'], ['S']];
     for (var s = 0; s < 6; s++) {
@@ -105,6 +108,26 @@ Future<void> _capture(WidgetTester tester, Size size, String out, {String? resul
       await tester.pump(const Duration(milliseconds: 100));
     }
   }
+  if (revealMs != null) {
+    c.view = _view()..['trick'] = [];
+    c.notifyListeners();
+    await tester.pump(const Duration(milliseconds: 16));
+    if (framesDir != null) {
+      // كل 40ms لقطة لين يخلص (للفيديو)، ونبدأ من قبل الاختيار بشوي
+      Directory(framesDir).createSync(recursive: true);
+      for (var i = 0; i * 40 <= revealMs; i++) {
+        await tester.runAsync(() async {
+          final ro = tester.renderObject<RenderRepaintBoundary>(find.byKey(const ValueKey('shot')));
+          final img = await ro.toImage(pixelRatio: 0.75);
+          final png = await img.toByteData(format: ui.ImageByteFormat.png);
+          File('$framesDir/${i.toString().padLeft(3, '0')}.png').writeAsBytesSync(png!.buffer.asUint8List());
+        });
+        await tester.pump(const Duration(milliseconds: 40));
+      }
+    } else {
+      await tester.pump(Duration(milliseconds: revealMs));
+    }
+  }
   if (result != null) {
     c.view = _view()
       ..['phase'] = 'roundEnd'
@@ -144,10 +167,36 @@ void main() {
     await _capture(tester, const Size(390, 844), 'build/preview_portrait.png');
   });
 
+  testWidgets('no signals: bid window has 5, and forced 5', (tester) async {
+    addTearDown(tester.view.reset);
+    await _capture(tester, const Size(390, 844), 'build/preview_bid5.png', bidding: true, noSignals: true,
+        patch: {'minBid': 5, 'currentBid': 0, 'bids': [for (var s = 1; s < 6; s++) {'seat': s, 'bid': 'pass'}], 'khabis': 0, 'buyer': null, 'legalBids': ['majbur', 5, 6, 7, 8, 9]});
+    expect(find.text('5 مجبور'), findsOneWidget);
+    expect(find.text('5'), findsWidgets);
+  });
+
   testWidgets('landscape preview', (tester) async {
     addTearDown(tester.view.reset);
     await _capture(tester, const Size(844, 390), 'build/preview_landscape.png');
   });
+
+  // فيديو أنميشن الحكم: build/reveal_frames_l و build/reveal_frames_p
+  for (final (size, o) in const [(Size(844, 390), 'l'), (Size(390, 844), 'p')]) {
+    testWidgets('trump reveal frames $o', (tester) async {
+      addTearDown(tester.view.reset);
+      await _capture(tester, size, 'build/preview_reveal_${o}_end.png', revealMs: 2200, framesDir: 'build/reveal_frames_$o');
+    });
+  }
+
+  // اختيار الحكم: لقطات من الأنميشن (يطلع كبير بالوسط، وبعدها ينزل مكانه)
+  for (final ms in [150, 700, 1250, 1500, 1900]) {
+    for (final (size, o) in const [(Size(844, 390), 'l'), (Size(390, 844), 'p')]) {
+      testWidgets('trump reveal $o $ms', (tester) async {
+        addTearDown(tester.view.reset);
+        await _capture(tester, size, 'build/preview_reveal_${o}_$ms.png', revealMs: ms);
+      });
+    }
+  }
 
   testWidgets('my card leaves from the hand', (tester) async {
     addTearDown(tester.view.reset);
@@ -162,6 +211,18 @@ void main() {
     for (var i = 0; i < 30; i++) {
       await tester.pump(const Duration(milliseconds: 100));
     }
+  });
+
+  testWidgets('majbur and madmoon next to me', (tester) async {
+    addTearDown(tester.view.reset);
+    await _capture(tester, const Size(390, 844), 'build/preview_majbur_me.png', patch: {'buyer': 0, 'majbur': true});
+    await _capture(tester, const Size(844, 390), 'build/preview_madmoon_me.png', patch: {'buyer': 0, 'madmoon': true});
+  });
+
+  testWidgets('a player dropped: note for the others', (tester) async {
+    addTearDown(tester.view.reset);
+    await _capture(tester, const Size(390, 844), 'build/preview_note_portrait.png', note: 'خصيب فصل، والبوت يلعب مكانه');
+    await _capture(tester, const Size(844, 390), 'build/preview_note_landscape.png', note: 'فهد دخل مكان خصيب');
   });
 
   testWidgets('no signals game', (tester) async {
@@ -223,7 +284,7 @@ void main() {
   testWidgets('rounds report', (tester) async {
     addTearDown(tester.view.reset);
     await _capture(tester, const Size(390, 844), 'build/preview_rounds_table.png');
-    await tester.tap(find.byIcon(Icons.receipt_long));
+    await tester.tap(find.text('من')); // الضغط على النتيجة يفتح النشرة
     await tester.pump(const Duration(milliseconds: 16));
     await tester.pump(const Duration(milliseconds: 500));
     await tester.runAsync(() async {

@@ -9,6 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:kout/i18n.dart';
 import 'package:kout/leaderboard.dart';
 import 'package:kout/main.dart';
+import 'package:kout/progress_pages.dart';
 import 'package:kout/net.dart';
 import 'package:kout/progress.dart';
 import 'package:kout/sounds.dart';
@@ -58,7 +59,7 @@ void main() {
   });
 
   test('each level needs more XP than the one before', () {
-    expect([for (var l = 1; l <= 6; l++) Progress.xpFor(l)], [0, 100, 380, 900, 1700, 2820]);
+    expect([for (var l = 1; l <= 6; l++) Progress.xpFor(l)], [0, 140, 310, 510, 740, 1010]);
     for (var l = 2; l < 30; l++) {
       expect(Progress.levelStep(l), greaterThan(Progress.levelStep(l - 1)));
     }
@@ -98,6 +99,14 @@ void main() {
       await _shot(tester, 'build/preview_lb_${name}_page.png');
       await _tap(tester, find.text(en ? 'This week' : 'الأسبوع'));
       await _shot(tester, 'build/preview_lb_${name}_week.png');
+      // البروفايل بالقائمة يفتح تاريخك
+      if (name == 'portrait' || name == 'landscape') {
+        await tester.pumpWidget(RepaintBoundary(key: const ValueKey('shot'), child: KoutApp(key: ValueKey('${name}_p'), client: c)));
+        await tester.pump(const Duration(milliseconds: 400));
+        await _tap(tester, find.byType(ProfileCard));
+        expect(find.byType(HistoryPage), findsOneWidget);
+        await _shot(tester, 'build/preview_lb_${name}_history.png');
+      }
     }
   });
 }

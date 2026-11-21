@@ -60,6 +60,8 @@ class Progress extends ChangeNotifier {
 
   final Map<String, int> stats = {}; // كل الألعاب (أونلاين وتدريب)
   final Map<String, int> _daily = {}, _weekly = {}; // أونلاين بس
+  // كل اللي انلعب أونلاين (من «ابحث» بس): منه الخبرة والمستوى. بدأ من الصفر (2026-11-18)، فالخبرة القديمة من التدريب راحت
+  final Map<String, int> _online = {};
   final Set<String> claimed = {};
   String _day = '', _week = '';
   final Set<String> _seen = {}; // جولات انحسبت (عشان ما تنحسب مرتين)
@@ -77,15 +79,17 @@ class Progress extends ChangeNotifier {
   // ---------- المستوى ----------
   // الخبرة من اللعب: كل مباراة 20، كل فوز 30 زيادة، كل جولة 2، وكل باون 50.
   static int xpOf(Map<String, int> s) => (s['matches'] ?? 0) * 20 + (s['wins'] ?? 0) * 30 + (s['rounds'] ?? 0) * 2 + (s['bawanMade'] ?? 0) * 50;
-  int get xp => xpOf(stats);
+  int get xp => xpOf(_online);
 
   /// خبرة اليوم والأسبوع (أونلاين بس، مثل التحديات): عليها يمشي ترتيب المتصدرين
   int get xpToday => xpOf(_daily);
   int get xpWeek => xpOf(_weekly);
 
-  /// كل مستوى أصعب من اللي قبله: من المستوى L للي بعده تبي 100×L^1.5 خبرة (مقربة لعشرات):
-  /// 2 = 100، 3 = 380، 4 = 900، 5 = 1700، 6 = 2820، 10 = 11100، 20 = 67140
-  static int levelStep(int level) => (100 * pow(level, 1.5) / 10).round() * 10;
+  /// كل مستوى أصعب من اللي قبله: من المستوى L للي بعده تبي 120 + 20×L^1.25 خبرة (مقربة لعشرات).
+  /// الـ 120 الثابتة تخلي أول المستويات تبي لعب (مو كل مباراة مستوى).
+  /// المباراة أونلاين تعطي ~60 خبرة، فتقريباً: 5 = 740 (~12 مباراة)، 10 = 2,490 (~40)، 20 = 9,380 (~155)، 30 = 21,510 (~355)،
+  /// 40 = 39,440 (~650)، 50 = 63,640 (~1,040)، 60 = 94,470 (~1,550)، 70 = 132,240 (~2,170)
+  static int levelStep(int level) => ((120 + 20 * pow(level, 1.25)) / 10).round() * 10;
   static final List<int> _starts = [0, 0]; // _starts[L] = الخبرة اللازمة لبداية المستوى L
   static int xpFor(int level) {
     while (_starts.length <= level) {
@@ -136,6 +140,9 @@ class Progress extends ChangeNotifier {
     _weekly
       ..clear()
       ..addAll(read('weekly'));
+    _online
+      ..clear()
+      ..addAll(read('onlineStats'));
     claimed
       ..clear()
       ..addAll(p.getStringList('claimed') ?? const []);
@@ -165,6 +172,7 @@ class Progress extends ChangeNotifier {
     await p.setString('stats', jsonEncode(stats));
     await p.setString('daily', jsonEncode(_daily));
     await p.setString('weekly', jsonEncode(_weekly));
+    await p.setString('onlineStats', jsonEncode(_online));
     await p.setStringList('claimed', claimed.toList());
     await p.setString('dailyDay', _day);
     await p.setString('weeklyWeek', _week);
@@ -176,6 +184,7 @@ class Progress extends ChangeNotifier {
     if (online) {
       _daily[stat] = (_daily[stat] ?? 0) + by;
       _weekly[stat] = (_weekly[stat] ?? 0) + by;
+      _online[stat] = (_online[stat] ?? 0) + by;
     }
   }
 
@@ -212,6 +221,15 @@ class Progress extends ChangeNotifier {
       _add('matches', online);
       _add(view['winner'] == me ? 'wins' : 'losses', online);
     }
+    notifyListeners();
+    _save();
+  }
+
+  /// طلع من الدور وما رجع (أو دخل لاعب مكانه): مباراة خسرانة
+  void recordForfeit({required bool online}) {
+    _roll(DateTime.now());
+    _add('matches', online);
+    _add('losses', online);
     notifyListeners();
     _save();
   }

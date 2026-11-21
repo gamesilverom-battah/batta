@@ -13,6 +13,13 @@ import 'package:kout/sounds.dart';
 
 class _Client extends GameClient {}
 
+/// الدخول بالرابط بدون سيرفر
+class _LinkClient extends GameClient {
+  int joins = 0;
+  @override
+  Future<void> joinRoom(String roomCode) async => joins++;
+}
+
 Future<void> _shot(WidgetTester tester, String out) async {
   await tester.runAsync(() async {
     final ro = tester.renderObject<RenderRepaintBoundary>(find.byKey(const ValueKey('shot')));
@@ -42,8 +49,9 @@ void main() {
         ..connected = true
         ..intro = false
         ..code = '4821'
+        ..serverUrl = 'wss://104-194-132-78.sslip.io'
         ..room = {
-          't': 'room', 'code': '4821', 'mode': mode, 'started': false, 'you': 0, 'isHost': true,
+          't': 'room', 'code': '4821', 'mode': mode, 'started': false, 'you': 0, 'isHost': true, 'stake': 112, 'stakes': [112, 280],
           'seats': [
             {'name': 'مهند', 'bot': false, 'connected': true, 'char': 'aslam'},
             {'name': 'سالم', 'bot': false, 'connected': true, 'char': 'wadamtih', 'fc': 'K7Q2XM'},
@@ -62,13 +70,46 @@ void main() {
         for (var i = 0; i < 12; i++) {
           await tester.pump(const Duration(milliseconds: 50));
         }
-        expect(find.text('انسخ الدعوة'), findsOneWidget);
+        expect(find.text('انسخ الرابط'), findsOneWidget);
+        expect(find.text('https://104-194-132-78.sslip.io?room=4821'), findsOneWidget);
         expect(tester.takeException(), isNull);
         await _shot(tester, 'build/preview_lobby_${name}_invite.png');
       }
       await tester.pumpWidget(const SizedBox());
       await tester.pump(const Duration(seconds: 1));
     }
+  });
+
+  testWidgets('room link: opens only the room (name first), then back to the room or download the app', (tester) async {
+    Sfx.muted = true;
+    await tester.runAsync(() async {
+      final f = FontLoader('ElMessiri')..addFont(rootBundle.load('assets/fonts/ElMessiri-Bold.ttf'));
+      await f.load();
+      final icons = File('${Platform.environment['FLUTTER_ROOT']}/bin/cache/artifacts/material_fonts/MaterialIcons-Regular.otf');
+      if (icons.existsSync()) await (FontLoader('MaterialIcons')..addFont(Future.value(ByteData.sublistView(icons.readAsBytesSync())))).load();
+    });
+    addTearDown(tester.view.reset);
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    final c = _LinkClient()
+      ..name = ''
+      ..intro = false
+      ..linkRoom = '4821';
+    await tester.pumpWidget(RepaintBoundary(key: const ValueKey('shot'), child: KoutApp(client: c)));
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('دعوة لغرفة 4821'), findsOneWidget);
+    expect(find.text('6 لاعبين'), findsNothing); // ما فيه قوائم اللعبة
+    await _shot(tester, 'build/preview_link_name.png');
+    // دخل وطلع: يرجع للغرفة أو يحمّل التطبيق
+    c.name = 'سالم';
+    await tester.pumpWidget(RepaintBoundary(key: const ValueKey('shot'), child: KoutApp(key: const ValueKey('again'), client: c)));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(c.joins, 1); // عنده اسم: دخل الغرفة على طول
+    expect(find.text('حمّل التطبيق'), findsOneWidget);
+    await _shot(tester, 'build/preview_link_left.png');
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(seconds: 1));
   });
 
   testWidgets('search screen without countdown', (tester) async {

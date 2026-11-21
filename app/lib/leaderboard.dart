@@ -95,7 +95,9 @@ class _RankBadge extends StatelessWidget {
 class LeaderboardBox extends StatelessWidget {
   final VoidCallback onTap;
   final double width;
-  const LeaderboardBox({super.key, required this.onTap, this.width = 132});
+  /// size: مربع بنفس مقاس الشعار (مكانه بالقائمة جنب بروفايل اللاعب)، وإلا خانة صغيرة بعرض width
+  final double? size;
+  const LeaderboardBox({super.key, required this.onTap, this.width = 132, this.size});
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
@@ -105,7 +107,7 @@ class LeaderboardBox extends StatelessWidget {
           Widget row(int i) {
             final e = i < top.length ? top[i] : null;
             return Padding(
-              padding: const EdgeInsets.only(top: 3),
+              padding: EdgeInsets.only(top: size != null ? 9 : 3),
               child: Row(children: [
                 _RankBadge(i + 1, size: 16),
                 const SizedBox(width: 4),
@@ -119,6 +121,34 @@ class LeaderboardBox extends StatelessWidget {
             );
           }
 
+          final content = Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Row(children: [
+              const Bob(phase: 0.4, lift: 2, child: Icon(Icons.emoji_events, size: 15, color: Color(0xFFFFD24A))),
+              const SizedBox(width: 4),
+              Expanded(child: FittedBox(fit: BoxFit.scaleDown, alignment: AlignmentDirectional.centerStart, child: Text(tr('متصدرين اليوم'), style: TextStyle(fontFamily: 'ElMessiri', fontSize: 11.5, height: 1.15, fontWeight: FontWeight.w700, color: Colors.white)))),
+              Icon(Directionality.of(context) == TextDirection.rtl ? Icons.chevron_left : Icons.chevron_right, size: 14, color: const Color(0xFFAAAAAA)),
+            ]),
+            for (var i = 0; i < 3; i++) row(i),
+          ]);
+          // مربع بمقاس الشعار وبنفس شكل بطاقة البروفايل (يتواكبون جنب بعض)
+          final s = size;
+          if (s != null) {
+            return Pressable(child: GestureDetector(
+              onTap: withTap(onTap),
+              child: Container(
+                width: s,
+                height: s,
+                padding: EdgeInsets.all(s * 0.08),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1B1C1F),
+                  borderRadius: BorderRadius.circular(s * 0.18),
+                  border: Border.all(color: const Color(0xFF111111), width: 3),
+                  boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 8, offset: Offset(0, 4))],
+                ),
+                child: FittedBox(fit: BoxFit.contain, child: SizedBox(width: 108, child: content)),
+              ),
+            ));
+          }
           return GestureDetector(
             onTap: withTap(onTap),
             child: Container(
@@ -129,15 +159,7 @@ class LeaderboardBox extends StatelessWidget {
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(color: Colors.white, width: 2),
               ),
-              child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                Row(children: [
-                  const Bob(phase: 0.4, lift: 2, child: Icon(Icons.emoji_events, size: 15, color: Color(0xFFFFD24A))),
-                  const SizedBox(width: 4),
-                  Expanded(child: FittedBox(fit: BoxFit.scaleDown, alignment: AlignmentDirectional.centerStart, child: Text(tr('متصدرين اليوم'), style: TextStyle(fontFamily: 'ElMessiri', fontSize: 11.5, height: 1.15, fontWeight: FontWeight.w700, color: Colors.white)))),
-                  Icon(Directionality.of(context) == TextDirection.rtl ? Icons.chevron_left : Icons.chevron_right, size: 14, color: const Color(0xFFAAAAAA)),
-                ]),
-                for (var i = 0; i < 3; i++) row(i),
-              ]),
+              child: content,
             ),
           );
         },

@@ -15,6 +15,9 @@ const WIN_SCORES = [54, 34];
 const GREY_PENALTY = 15;
 const GREY_DEADLINE = 3; // لازم ينزل الجوكر الصغير خلال أول 3 لمّات
 const MIN_BID = 6;
+// «بدون إشارة»: المزايدة تبدأ من 5، والمجبور 5
+const MIN_BID_NO_SIGNALS = 5;
+const minBid = (state) => (state.signals === false ? MIN_BID_NO_SIGNALS : MIN_BID);
 const BAWAN = 9;
 const MAX_SIGNALS_PER_TURN = 5; // كل نوع ينرسل لحاله لما ينضغط
 
@@ -134,13 +137,13 @@ function fail(msg) {
 
 // ---------- المزايدة ----------
 
-// الخابص إذا وصله الدور ومحد زايد: بدل «طاف» عنده «6 مجبور» (MAJBUR)
+// الخابص إذا وصله الدور ومحد زايد: بدل «طاف» عنده «6 مجبور» (MAJBUR)، و«5 مجبور» بدون إشارة
 const MAJBUR = 'majbur';
 
 function legalBids(state, seat) {
   if (state.phase !== 'bidding' || state.turn !== seat) return [];
   const out = [seat === state.khabis && state.buyer === null ? MAJBUR : 'pass'];
-  for (let b = Math.max(MIN_BID, state.currentBid + 1); b <= BAWAN; b++) out.push(b);
+  for (let b = Math.max(minBid(state), state.currentBid + 1); b <= BAWAN; b++) out.push(b);
   return out;
 }
 
@@ -149,7 +152,7 @@ function bid(state, seat, value) {
   state.bids.push({ seat, bid: value });
   if (value === MAJBUR) {
     // 6 مجبور: الخسارة 6 بس للخصم بدون مضاعفة، وبدون باون
-    state.currentBid = MIN_BID;
+    state.currentBid = minBid(state);
     state.buyer = seat;
     state.majbur = true;
   } else if (value !== 'pass') {
@@ -285,10 +288,10 @@ function resolveAfterTrick(state) {
 
   const need = state.currentBid;
   if (state.tricksWon[bidTeam] >= need) {
-    return endRound(state, { type: 'made', team: bidTeam, points: state.majbur ? MIN_BID : need });
+    return endRound(state, { type: 'made', team: bidTeam, points: state.majbur ? minBid(state) : need });
   }
   if (state.tricksWon[opp] > TRICKS - need) {
-    return endRound(state, { type: 'failed', team: opp, points: state.majbur ? MIN_BID : need * 2 });
+    return endRound(state, { type: 'failed', team: opp, points: state.majbur ? minBid(state) : need * 2 });
   }
   // خيار الباون: الفريق أخذ كل اللمّات وباقي له لمّة وحدة (المجبور ما له باون)
   if (!state.majbur && state.tricksWon[opp] === 0 && state.tricksWon[bidTeam] === need - 1) {
@@ -401,6 +404,7 @@ function viewFor(state, seat) {
     // هل رمي الكبير الحين يخسّر المباراة (عشان التطبيق ينبّه اللاعب)
     blueLoses: state.phase === 'playing' && blueLosesMatch(state, seat),
     signals: state.signals !== false, // التطبيق يخفي الإشارات كلها لو false
+    minBid: minBid(state), // أقل مزايدة (والمجبور): 6، و5 بدون إشارة
     canSignal: canSignal(state, seat),
     canSignalJoker: canSignalJoker(state, seat),
     hasJoker: isBuyerMate(state, seat) && (state.hands[seat] || []).some(isJoker), // زر إشارة الجوكر يطلع لزملاء الشاري بس
@@ -434,8 +438,8 @@ function sortHand(hand) {
 }
 
 module.exports = {
-  SUITS, BLUE, GREY, JOKER_SIGNAL, PLAYERS, MODES, TRICKS, WIN_SCORE, WIN_SCORES, GREY_PENALTY, GREY_DEADLINE, MIN_BID, BAWAN, MAJBUR,
+  SUITS, BLUE, GREY, JOKER_SIGNAL, PLAYERS, MODES, TRICKS, WIN_SCORE, WIN_SCORES, GREY_PENALTY, GREY_DEADLINE, MIN_BID, MIN_BID_NO_SIGNALS, minBid, BAWAN, MAJBUR,
   nextSeat, teamOf, isJoker, suitOf, power, rankOf, newDeck, shuffle, deal, sortHand,
   createMatch, startRound, endRound, legalBids, bid, chooseTrump, legalCards, trickWinner, blueLosesMatch,
-  playCard, answerBawan, nextRound, signal, viewFor,
+  playCard, answerBawan, nextRound, signal, viewFor, resolveAfterTrick,
 };

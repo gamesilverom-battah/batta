@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 
 import 'i18n.dart';
+import 'level_badge.dart';
 import 'avatars.dart';
 import 'cards.dart';
 import 'coins.dart';
@@ -11,6 +12,7 @@ import 'fullscreen.dart';
 import 'main.dart' show showErrors;
 import 'menus.dart';
 import 'net.dart';
+import 'progress.dart';
 import 'progress_pages.dart' show showPlayerProfile;
 import 'sounds.dart';
 import 'store.dart' show MatBackground;
@@ -50,8 +52,8 @@ class _Board {
       // مثل الصورة النموذج: أنا تحت يسار، اثنين يمين واثنين يسار على حافة الشاشة، وواحد فوق بالنص
       final avatar = min(64.0, h * 0.17);
       final edge = avatar / 2 + 16;
-      final handW = min(80.0, h * 0.21);
-      final handTop = h - handW * cardRatio * 0.66; // الأوراق تطلع من تحت الشاشة (يبين ثلثينها)
+      final handW = min(88.0, h * 0.23);
+      final handTop = h - handW * cardRatio * 0.72; // الأوراق تطلع من تحت الشاشة (يبين قرابة ثلاث أرباعها)
       final topY = avatar * 0.78 - 6; // اللي فوق أعلى ما يمكن: راسه يوصل لحافة الشاشة
       // الطاولة بنص الشاشة بالضبط (نفس المسافة فوق وتحت ويمين ويسار)
       final ty = topY + avatar * 0.45;
@@ -129,10 +131,12 @@ class _TableScreenState extends State<TableScreen> with TickerProviderStateMixin
   static const _collectMs = 2200;
   late final AnimationController _collect = AnimationController(vsync: this, duration: const Duration(milliseconds: _collectMs));
   bool _resultWaiting = false; // نتيجة الجولة تنتظر لين تخلص آخر لمّة
-  late final AnimationController _deal = AnimationController(vsync: this, duration: const Duration(milliseconds: 2600), value: 1);
+  late final AnimationController _deal = AnimationController(vsync: this, duration: const Duration(milliseconds: 2300), value: 1);
   // كف الجوكر الكبير: ينزل 170ms ويضرب، وبعدها يرتفع ويختفي
   late final AnimationController _slap = AnimationController(vsync: this, duration: const Duration(milliseconds: 820));
   late final AnimationController _shake = AnimationController(vsync: this, duration: const Duration(milliseconds: 280));
+  // اختيار الحكم: الحكم والعدد يطلعون كبار بوسط الشاشة، يوقفون شوي، وبعدها ينزلون لمكانهم على الطاولة
+  late final AnimationController _trumpReveal = AnimationController(vsync: this, duration: const Duration(milliseconds: 2600), value: 1);
   Map<String, dynamic>? _collecting;
   _Board? _board; // آخر مقاسات الطاولة: منها مكان كل شخصية للصوت
   bool _collectSound = false, _liftSound = false;
@@ -217,6 +221,7 @@ class _TableScreenState extends State<TableScreen> with TickerProviderStateMixin
     _deal.dispose();
     _slap.dispose();
     _shake.dispose();
+    _trumpReveal.dispose();
     _effectTimer?.cancel();
     _rippleTimer?.cancel();
     _ripple.dispose();
@@ -304,6 +309,7 @@ class _TableScreenState extends State<TableScreen> with TickerProviderStateMixin
     final trumpSuit = v['trump'] as String?;
     if (trumpSuit != null && _trumpSaidRound != round && v['buyer'] is int) {
       _trumpSaidRound = round;
+      _trumpReveal.forward(from: 0);
       final e = switch (trumpSuit) { 'S' => VoiceEvent.trumpS, 'D' => VoiceEvent.trumpD, 'C' => VoiceEvent.trumpC, 'H' => VoiceEvent.trumpH, _ => null };
       if (e != null) _say(v['buyer'] as int, e);
     }
@@ -584,31 +590,17 @@ class _TableScreenState extends State<TableScreen> with TickerProviderStateMixin
                   Positioned.fill(child: RepaintBoundary(child: Stack(clipBehavior: Clip.none, children: _handLayer(v, b)))),
                   if (v['signals'] != false) _signalRow(v, b), // «بدون إشارة»: ما فيه أزرار إشارات
                   _slapLayer(b),
-                  // النتيجة فوق يسار، وجنبها زر نشرة الجولات
+                  // النتيجة فوق يسار: الضغط عليها يفتح نشرة الجولات
                   Positioned(
                     top: b.landscape ? 1 : 6,
                     left: b.landscape ? b.size.width * 0.14 : 6,
                     child: Transform.scale(
                       scale: b.landscape ? 0.8 : 1,
                       alignment: Alignment.topLeft,
-                      child: Row(mainAxisSize: MainAxisSize.min, textDirection: TextDirection.ltr, children: [
-                        _Scores(view: v),
-                        const SizedBox(width: 4),
-                        Pressable(child: GestureDetector(
-                          onTap: withTap(() => _showRounds(context, c)),
-                          child: Container(
-                            width: 40,
-                            height: 40,
-                            decoration: BoxDecoration(
-                              gradient: KoutColors.chrome(),
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(color: KoutColors.chromeEdge, width: 2),
-                              boxShadow: const [BoxShadow(color: Colors.black45, blurRadius: 8, offset: Offset(0, 3))],
-                            ),
-                            child: const Icon(Icons.receipt_long, size: 20, color: KoutColors.ink),
-                          ),
-                        )),
-                      ]),
+                      child: Pressable(child: GestureDetector(
+                        onTap: withTap(() => _showRounds(context, c)),
+                        child: _Scores(view: v),
+                      )),
                     ),
                   ),
                   Positioned(top: 2, right: 2, child: _TopActions(client: c)),
@@ -619,6 +611,28 @@ class _TableScreenState extends State<TableScreen> with TickerProviderStateMixin
                         : Rect.fromCenter(center: Offset(b.size.width / 2, b.table.center.dy), width: b.size.width, height: 2 * min(b.table.center.dy, b.size.height - b.table.center.dy)),
                     child: _overlay(v),
                   ),
+                  _centerInfo(v, b, flight: true), // الحكم والعدد وهم طايرين: فوق كل شي
+                  // تنبيه: لاعب فصل أو رجع أو دخل بديل مكانه
+                  if (c.seatNote != null)
+                    Positioned(
+                      top: b.landscape ? 66 : 150,
+                      left: 0,
+                      right: 0,
+                      child: IgnorePointer(
+                        child: Center(
+                          child: Container(
+                            key: ValueKey(c.seatNote!.at),
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: const Color(0xDD111111),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: Colors.white, width: 1.5),
+                            ),
+                            child: Text(c.seatNote!.text, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: Colors.white)),
+                          ),
+                        ),
+                      ),
+                    ),
                 ]),
               ),
             );
@@ -640,11 +654,13 @@ class _TableScreenState extends State<TableScreen> with TickerProviderStateMixin
 
   Widget _cardAt(Offset p, double w, Widget child) => Positioned(left: p.dx - w / 2, top: p.dy - w * cardRatio / 2, child: child);
 
-  // معلومات الجولة بوسط الطاولة: الحكم وعدد المزايدة واسم المزايد
-  Widget _centerInfo(Map<String, dynamic> v, _Board b) {
+  // معلومات الجولة بوسط الطاولة: الحكم وعدد المزايدة واسم المزايد.
+  // flight: نسخة فوق كل شي (الأوراق والشخصيات) فيها الحكم والعدد وهم طايرين بأنميشن الاختيار بس
+  Widget _centerInfo(Map<String, dynamic> v, _Board b, {bool flight = false}) {
     final trump = v['trump'] as String?;
     final buyer = v['buyer'] as int?;
     if (trump == null || buyer == null) return const SizedBox.shrink();
+    if (flight && !_trumpReveal.isAnimating) return const SizedBox.shrink();
     final bawan = _bawanActive(v);
     final suit = Stack(alignment: Alignment.center, children: [
       SuitIcon(trump, size: 34, color: Colors.black),
@@ -652,6 +668,34 @@ class _TableScreenState extends State<TableScreen> with TickerProviderStateMixin
     ]);
     final bid = OutlinedText(bawan ? tr('باون') : '${v['currentBid']}', size: 30, color: bawan ? KoutColors.gold : Colors.white);
     final name = OutlinedText(c.seatName(buyer), size: b.landscape ? 15 : 12, color: KoutColors.team(buyer % 2));
+    // أنميشن اختيار الحكم: يطلع صغير من الشاري، يكبر بوسط الشاشة ويوقف شوي، وبعدها ينزل لمكانه على الطاولة (target: وسط مكانه الأخير)
+    final from = b.seats[_rel(buyer, b.seats.length)], mid = b.size.center(Offset.zero);
+    // بالوسط كبير: يغطي اللي تحته عادي (بالعرضي ثلاث أرباع طول الشاشة، وبالطولي 80% من عرضها)
+    final big = b.landscape ? b.size.height * 0.75 / 75 : b.size.width * 0.8 / 90;
+    double flyOf(double t) => Curves.easeInOutCubic.transform(((t - 0.73) / 0.27).clamp(0.0, 1.0));
+    Widget reveal(Widget child, Offset target) => AnimatedBuilder(
+          animation: _trumpReveal,
+          child: child,
+          builder: (_, child) {
+            final t = _trumpReveal.value;
+            if (!flight) return t >= 1 ? child! : Opacity(opacity: 0, child: child); // على الطاولة يبين بعد ما يوصل
+            if (t >= 1) return const SizedBox.shrink();
+            final out = Curves.easeOutBack.transform((t / 0.56).clamp(0.0, 1.0)); // من الشاري للوسط (على مهله عشان يبين وين طلع)
+            final fly = flyOf(t); // من الوسط للطاولة
+            final pos = fly > 0 ? Offset.lerp(mid, target, fly)! : Offset.lerp(from, mid, out)!;
+            final scale = fly > 0 ? big + (1 - big) * fly : 0.4 + (big - 0.4) * out;
+            return Transform.translate(
+              offset: pos - target,
+              child: Transform.scale(scale: max(0.0, scale), child: child),
+            );
+          },
+        );
+    // اسم الشاري يبين بعد ما ينزل الحكم مكانه
+    Widget later(Widget child) => AnimatedBuilder(
+          animation: _trumpReveal,
+          child: child,
+          builder: (_, child) => flight ? const SizedBox.shrink() : _trumpReveal.value >= 1 ? child! : Opacity(opacity: flyOf(_trumpReveal.value), child: child),
+        );
     if (b.landscape) {
       // بالعرضي: يسار (الحكم والعدد) ويمين (الشاري)، جنب أوراق الجنبين بنفس المسافة من الوسط
       final d = b.cardW * 2.1 + 60; // طرف أوراق الجنب (1.6 + نص ورقة) + مسافة
@@ -666,8 +710,8 @@ class _TableScreenState extends State<TableScreen> with TickerProviderStateMixin
       return Positioned.fill(
         child: IgnorePointer(
           child: Stack(children: [
-            at(-d, Column(mainAxisSize: MainAxisSize.min, children: [suit, bid])),
-            at(d, Column(mainAxisSize: MainAxisSize.min, children: [OutlinedText(tr('الشاري'), size: 11, color: Color(0xFFEEEEEE)), name])),
+            at(-d, reveal(Column(mainAxisSize: MainAxisSize.min, children: [suit, bid]), Offset(b.center.dx - d, b.center.dy))),
+            at(d, later(Column(mainAxisSize: MainAxisSize.min, children: [OutlinedText(tr('الشاري'), size: 11, color: Color(0xFFEEEEEE)), name]))),
           ]),
         ),
       );
@@ -679,8 +723,9 @@ class _TableScreenState extends State<TableScreen> with TickerProviderStateMixin
       width: 160,
       child: IgnorePointer(
         child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Row(mainAxisSize: MainAxisSize.min, children: [suit, const SizedBox(width: 6), bid]),
-          name,
+          // الرقم ينزل شوي عشان يكون بنفس مستوى الشكل (الخط فيه فراغ تحت)
+          reveal(Row(mainAxisSize: MainAxisSize.min, children: [suit, const SizedBox(width: 6), Transform.translate(offset: const Offset(0, 4), child: bid)]), Offset(b.center.dx, b.center.dy - 15)),
+          later(name),
         ]),
       ),
     );
@@ -787,7 +832,7 @@ class _TableScreenState extends State<TableScreen> with TickerProviderStateMixin
     final avail = b.handRight - b.handLeft;
     // المسافة بين الأوراق ثابتة (محسوبة على يد كاملة 9 أوراق)، فلما تنقص ورقة يتقاربون للوسط ويبقى الشكل مرتب.
     // بالعرضي الأوراق أقرب لبعض
-    final step = min(min(w + 4, (avail - w) / (max(n, 9) - 1)), b.landscape ? w * 0.3 : double.infinity);
+    final step = min(min(w + 4, (avail - w) / (max(n, 9) - 1)), b.landscape ? w * 0.36 : double.infinity);
     final total = w + step * (n - 1);
     // اليد من اليسار لليمين (هاس، كلفس، ديمن، سبيت، ثم الجوكرين)
     // بالعرضي اليد بنص الشاشة، وبالطولي بنص مساحتها
@@ -1055,7 +1100,7 @@ class _TableScreenState extends State<TableScreen> with TickerProviderStateMixin
                   ]),
                 ),
                 if (v['majbur'] == true)
-                  Padding(padding: EdgeInsets.only(top: 8), child: Text(tr('6 مجبور'), style: TextStyle(fontSize: 14, color: KoutColors.majbur))),
+                  Padding(padding: EdgeInsets.only(top: 8), child: Text(bidName('majbur', v['minBid'] as int? ?? 6), style: TextStyle(fontSize: 14, color: KoutColors.majbur))),
               ])
             : Text(trf('{0} يختار الحكم...', [c.seatName(buyer!)]), style: const TextStyle(fontSize: 18, color: KoutColors.ink)),
       );
@@ -1732,7 +1777,7 @@ class _TopActions extends StatelessWidget {
                 backgroundColor: const Color(0xFF111111),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: const BorderSide(color: Colors.white, width: 2)),
                 title: Text(tr('تطلع من اللعبة؟'), style: TextStyle(fontSize: 30)),
-                content: Text(tr('مقعدك يبقى محجوز وتقدر ترجع بنفس الكود.'), style: TextStyle(fontSize: 21)),
+                content: Text(client.inRunningGame ? tr('البوت بيلعب مكانك، وتقدر ترجع للدور لين يخلص (أو لين يدخل لاعب مكانك).') : tr('مقعدك يبقى محجوز وتقدر ترجع بنفس الكود.'), style: TextStyle(fontSize: 21)),
                 actions: [
                   Pressable(child: TextButton(onPressed: withTap(() => Navigator.pop(context)), child: Text(tr('لا'), style: TextStyle(color: Colors.white, fontSize: 22)))),
                   Pressable(child: TextButton(onPressed: withTap(() { Navigator.pop(context); client.leave(); }), child: Text(tr('اطلع'), style: TextStyle(color: Colors.white, fontSize: 22)))),
@@ -1771,6 +1816,8 @@ class _Seat extends StatelessWidget {
     final info = client.seatInfo(seat);
     final isBot = info?['bot'] == true;
     final offline = info != null && info['connected'] != true;
+    // المستوى: أنا من جهازي (أحدث)، والباقين من السيرفر
+    final level = me ? Progress.instance.level : isBot ? null : (info?['level'] as num?)?.toInt(); // البوت بدون مستوى
     final left = isTurn ? client.secondsLeft : null;
     final total = phase == 'trump' ? _trumpSeconds : _turnSeconds;
 
@@ -1797,7 +1844,7 @@ class _Seat extends StatelessWidget {
           top: nameLeft ? null : -12,
           bottom: nameLeft ? -6 : null,
           right: -10,
-          child: const Icon(Icons.star, size: 28, color: KoutColors.gold, shadows: [Shadow(color: Colors.black, blurRadius: 4)]),
+          child: const _BuyerStar(),
         ),
       if (offline) const Positioned(top: -4, left: -4, child: Icon(Icons.wifi_off, size: 14, color: KoutColors.lose)),
       // طاف: علامة كف رمادية جنب الشخصية من جهة الطاولة
@@ -1831,9 +1878,13 @@ class _Seat extends StatelessWidget {
     ]));
 
     // كل الكتابة تحت الشخصية بحد أسود متصل
-    final tags = <Widget>[
+    // «مضمون» و«مجبور»: عندي على يسار شخصيتي، والباقين تحت شخصياتهم
+    final buyerTags = <Widget>[
       if (isBuyer && v['madmoon'] == true) OutlinedText(tr('مضمون'), size: 13, color: KoutColors.madmoon),
       if (isBuyer && v['majbur'] == true) OutlinedText(tr('مجبور'), size: 13, color: KoutColors.majbur),
+    ];
+    final tags = <Widget>[
+      if (!me) ...buyerTags,
       if (isKhabis && phase == 'bidding') OutlinedText(tr('الموزع'), size: 11, color: Color(0xFFDDDDDD)),
       if (left != null && showSeconds)
         ValueListenableBuilder(
@@ -1846,14 +1897,19 @@ class _Seat extends StatelessWidget {
     ];
 
     // الاسم بلون فريقه
-    final name = OutlinedText(me ? tr('أنت') : client.seatName(seat), size: 14, color: teamColor);
+    // وجنبه شارة المستوى (شكلها يتغير كل 10 مستويات)
+    final nameText = OutlinedText(me ? tr('أنت') : client.seatName(seat), size: 14, color: teamColor);
+    final name = level == null || level <= 0
+        ? nameText
+        // الاسم الطويل على حافة الشاشة يصغر شوي بدل ما ينقص
+        : FittedBox(fit: BoxFit.scaleDown, child: Row(mainAxisSize: MainAxisSize.min, textDirection: TextDirection.rtl, children: [LevelBadge(level: level, size: 24), const SizedBox(width: 2), nameText]));
     if (nameLeft) {
-      // اللي فوق: الاسم على يسار الشخصية
+      // اللي فوق: الاسم (وشارة المستوى على يمينه) على يسار الشخصية
       return Directionality(
         textDirection: TextDirection.ltr,
         child: Row(mainAxisSize: MainAxisSize.min, children: [
           ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 130),
+            constraints: const BoxConstraints(maxWidth: 160),
             child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.end, children: [
               name,
               Wrap(spacing: 6, children: tags),
@@ -1865,7 +1921,19 @@ class _Seat extends StatelessWidget {
       );
     }
     return Column(mainAxisSize: MainAxisSize.min, children: [
-      avatar,
+      if (me && buyerTags.isNotEmpty)
+        // الشخصية تبقى بمكانها، والكلمة جنبها على اليسار
+        Stack(clipBehavior: Clip.none, children: [
+          avatar,
+          Positioned(
+            top: 0,
+            bottom: 0,
+            right: size + 14,
+            child: Center(child: Directionality(textDirection: TextDirection.ltr, child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.end, children: buyerTags))),
+          ),
+        ])
+      else
+        avatar,
       const SizedBox(height: 2),
       name,
       Wrap(spacing: 6, alignment: WrapAlignment.center, children: tags),
@@ -1927,8 +1995,8 @@ class _PassSign extends StatelessWidget {
       );
 }
 
-/// اسم المزايدة اللي يشوفه اللاعب
-String bidName(Object b) => switch (b) { 'pass' => tr('طاف'), 'majbur' => tr('6 مجبور'), _ => '$b' };
+/// اسم المزايدة اللي يشوفه اللاعب (المجبور 6، و5 بطور «بدون إشارة»)
+String bidName(Object b, [int minBid = 6]) => switch (b) { 'pass' => tr('طاف'), 'majbur' => trf('{0} مجبور', [minBid]), _ => '$b' };
 
 class _BidPanel extends StatelessWidget {
   final GameClient client;
@@ -1941,13 +2009,14 @@ class _BidPanel extends StatelessWidget {
     final legal = view['legalBids'] as List;
     final left = client.secondsLeft;
     final pass = legal.contains('majbur') ? 'majbur' : 'pass';
+    final minBid = view['minBid'] as int? ?? 6; // بدون إشارة: من 5
     Widget button(Object b) {
       final ok = legal.contains(b);
       return _ChromeButton(
         onTap: ok ? () => client.bid(b) : null,
         color: b == 'majbur' ? const Color(0xFFB86400) : null,
         padding: EdgeInsets.symmetric(horizontal: b is int ? 16 : 12, vertical: 9),
-        child: Text(bidName(b), style: TextStyle(fontSize: 20, color: b == 9 ? const Color(0xFFFFD65A) : Colors.white)),
+        child: Text(bidName(b, minBid), style: TextStyle(fontSize: 20, color: b == 9 ? const Color(0xFFFFD65A) : Colors.white)),
       );
     }
 
@@ -1959,16 +2028,16 @@ class _BidPanel extends StatelessWidget {
       if (legal.contains('majbur'))
         Padding(
           padding: EdgeInsets.only(top: 2),
-          child: Text(tr('محد زايد: «6 مجبور» إذا خسرت ياخذ الخصم 6 بس، وبدون باون'),
+          child: Text(trf('محد زايد: «{0} مجبور» إذا خسرت ياخذ الخصم {0} بس، وبدون باون', [minBid]),
               textAlign: TextAlign.center, style: TextStyle(fontSize: 12, color: Color(0xFF2B2E33))),
         ),
       const SizedBox(height: 12),
-      // من اليسار: 9، 8، 7، 6، طاف (بسطر واحد، يصغر إذا الشاشة ضيقة)
+      // من اليسار: 9، 8، 7، 6 (و5 بدون إشارة)، طاف (بسطر واحد، يصغر إذا الشاشة ضيقة)
       FittedBox(
         child: Directionality(
           textDirection: TextDirection.ltr,
           child: Row(mainAxisSize: MainAxisSize.min, children: [
-            for (final b in [9, 8, 7, 6, pass]) Padding(padding: const EdgeInsets.symmetric(horizontal: 3), child: button(b)),
+            for (final b in [9, 8, 7, 6, if (minBid <= 5) 5, pass]) Padding(padding: const EdgeInsets.symmetric(horizontal: 3), child: button(b)),
           ]),
         ),
       ),
@@ -1977,26 +2046,36 @@ class _BidPanel extends StatelessWidget {
 }
 
 /// حديدة الدور: بالباون هو اللي جاب الباون أو اللي قلبه (أخذ لمّة من فريق الباون)،
-/// وإلا أكثر لاعب جاب نقاط وهو شاري (التعادل: اللي وصل أكثر جولات، وبعدها اللي آخر وحدة له أحدث)
+/// وإلا صافي نقاط كل لاعب: اللي وصلها وهو شاري تنزاد، واللي خسرها وهو شاري (أو خيّس الجوكر) تنطرح.
+/// أكثر واحد صافيه بالموجب هو الحديدة (التعادل: اللي وصل أكثر جولات، وبعدها اللي آخر نقاط له أحدث).
+/// محد صافيه موجب: ما في حديدة
 ({int seat, int points, String? bawan})? _bestPlayer(List<Map> history) {
   final points = <int, int>{}, made = <int, int>{}, last = <int, int>{};
   int? bawan, breaker;
   for (var i = 0; i < history.length; i++) {
     final r = history[i];
     final buyer = r['buyer'];
+    final pts = (r['points'] as num?)?.toInt() ?? 0;
+    void add(int seat, int p) {
+      points[seat] = (points[seat] ?? 0) + p;
+      made.putIfAbsent(seat, () => 0);
+      last[seat] = i;
+    }
+    if (r['type'] == 'greyPenalty' && r['offender'] is int) add(r['offender'] as int, -pts);
     if (buyer is! int) continue;
     if (r['type'] == 'bawanWin') bawan = buyer;
     if (r['type'] == 'bawanFail' && r['breaker'] is int) breaker = r['breaker'] as int;
     if (r['type'] == 'made') {
-      points[buyer] = (points[buyer] ?? 0) + ((r['points'] as num?)?.toInt() ?? 0);
-      made[buyer] = (made[buyer] ?? 0) + 1;
-      last[buyer] = i;
+      add(buyer, pts);
+      made[buyer] = made[buyer]! + 1;
     }
+    if (r['type'] == 'failed') add(buyer, -pts);
   }
   if (bawan != null) return (seat: bawan, points: points[bawan] ?? 0, bawan: tr('جاب باون'));
   if (breaker != null) return (seat: breaker, points: points[breaker] ?? 0, bawan: tr('قلب الباون'));
-  if (points.isEmpty) return null;
-  final seat = points.keys.reduce((a, b) {
+  final plus = points.keys.where((s) => points[s]! > 0);
+  if (plus.isEmpty) return null;
+  final seat = plus.reduce((a, b) {
     final c = points[a]!.compareTo(points[b]!);
     if (c != 0) return c > 0 ? a : b;
     final m = made[a]!.compareTo(made[b]!);
@@ -2040,7 +2119,7 @@ class _RoundResult extends StatelessWidget {
       final best = _bestPlayer(history);
       final bestInfo = best == null ? null : client.seatInfo(best.seat);
       return Column(mainAxisSize: MainAxisSize.min, children: [
-        // حديدة الدور: أفضل لاعب بالمباراة (اللي جاب باون، وإلا أكثر واحد جاب نقاط وهو شاري)
+        // حديدة الدور: أفضل لاعب بالمباراة (اللي جاب باون أو قلبه، وإلا أكثر واحد صافي نقاطه موجب)
         if (best != null) ...[
           Row(mainAxisSize: MainAxisSize.min, children: [
             CharacterAvatar(charId: bestInfo?['char'] as String?, size: 46, ring: KoutColors.gold, background: KoutColors.team(best.seat % 2)),
@@ -2294,4 +2373,25 @@ class _SignalBarState extends State<_SignalBar> {
       ]),
     );
   }
+}
+
+/// نجمة الشاري: نجمة ذهبية بدائرة سودا بإطار ذهبي ولمعة، تبين على أي خلفية
+class _BuyerStar extends StatelessWidget {
+  const _BuyerStar();
+
+  @override
+  Widget build(BuildContext context) => Container(
+        width: 32,
+        height: 32,
+        decoration: BoxDecoration(
+          color: const Color(0xFF151515),
+          shape: BoxShape.circle,
+          border: Border.all(color: KoutColors.gold, width: 2.5),
+          boxShadow: [
+            BoxShadow(color: KoutColors.gold.withValues(alpha: 0.7), blurRadius: 10, spreadRadius: 1),
+            const BoxShadow(color: Colors.black54, blurRadius: 3, offset: Offset(0, 1)),
+          ],
+        ),
+        child: const Icon(Icons.star, size: 23, color: KoutColors.gold),
+      );
 }

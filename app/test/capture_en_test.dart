@@ -1,4 +1,4 @@
-// اللغة الإنجليزية والإعدادات وبروفايل اللاعب: flutter test test/capture_en_test.dart -> build/preview_en_*.png
+﻿// اللغة الإنجليزية والإعدادات وبروفايل اللاعب: flutter test test/capture_en_test.dart -> build/preview_en_*.png
 import 'dart:io';
 import 'dart:ui' as ui;
 
@@ -10,6 +10,7 @@ import 'package:kout/cards.dart';
 import 'package:kout/i18n.dart';
 import 'package:kout/i18n_en.dart';
 import 'package:kout/main.dart';
+import 'package:kout/progress_pages.dart';
 import 'package:kout/net.dart';
 import 'package:kout/progress.dart';
 import 'package:kout/sounds.dart';
@@ -100,7 +101,7 @@ void main() {
       await _tap(tester, find.text('Challenges'));
       await _shot(tester, 'build/preview_en_${name}_challenges.png');
       await _back(tester);
-      await _tap(tester, find.text('Your history'));
+      await _tap(tester, find.byType(ProfileCard));
       await _shot(tester, 'build/preview_en_${name}_history.png');
       await _back(tester);
       await _tap(tester, find.text('Practice'));

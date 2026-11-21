@@ -1,7 +1,8 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kout/avatars.dart';
 import 'package:kout/cards.dart';
+import 'package:kout/leaderboard.dart';
 import 'package:kout/main.dart';
 import 'package:kout/net.dart';
 import 'package:kout/wallet.dart';
@@ -281,7 +282,7 @@ void main() {
 
   testWidgets('home screen shows create and join', (tester) async {
     await tester.pumpWidget(KoutApp(client: GameClient()..name = 'مهند'));
-    expect(find.byType(AppLogo), findsOneWidget);
+    expect(find.byType(LeaderboardBox), findsOneWidget); // المتصدرين مكان الشعار
     for (final t in ['6 لاعبين', '4 لاعبين', 'غرفة مخصصة', 'تدريب']) {
       expect(find.text(t), findsOneWidget);
     }

@@ -63,6 +63,9 @@ List<ShopItem> shopItems(Map<String, String> charNames) => [
 /// مبالغ الدخول لكل نوع دور (من كم نقطة)
 const stakeLevels = {54: [160, 400], 34: [100, 250]};
 
+/// أقل دخول للغرفة المخصصة (70% من الأونلاين، نفس CUSTOM_STAKES بالسيرفر)
+const customMinStake = 112;
+
 /// الغوازي والمشتريات: تنحفظ بالجهاز لين يصير فيه تسجيل دخول
 class Wallet extends ChangeNotifier {
   Wallet._();
@@ -125,8 +128,8 @@ class Wallet extends ChangeNotifier {
       ..clear()
       ..addAll((p.getStringList('adsAt') ?? const []).map((e) => DateTime.fromMillisecondsSinceEpoch(int.parse(e))));
     _refreshGift(t);
-    // جيم كان شغال وانقفلت اللعبة: يعتبر خسارة (المبلغ انخصم من قبل)
-    if (_stakeRoom != null) await _clearStake(p);
+    // دور كان شغال وانقفلت اللعبة: المبلغ يبقى لين يقرر يرجع (وإذا ما رجع يعتبر خسارة)
+    if (_stakeRoom != null && p.getString('activeGame') == null) await _clearStake(p);
     await _save(p);
   }
 
@@ -265,12 +268,19 @@ class Wallet extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// رجع للدور اللي فصل عليه: نفس المبلغ اللي انخصم
+  void resume(String code, int? stake) {
+    roomStake = stake;
+    stakedRoom = stake == null ? null : code;
+  }
+
   /// طلع من الغرفة: إذا المباراة ما خلصت راح اللي حطه
-  Future<void> onLeave() async {
+  /// keepStake: طلع من دور شغّال ويقدر يرجع له، فالمبلغ يبقى لين يقرر
+  Future<void> onLeave({bool keepStake = false}) async {
     matchResult = null;
     roomStake = null;
     stakedRoom = null;
-    if (_stakeRoom == null) return;
+    if (_stakeRoom == null || keepStake) return;
     await _clearStake(await SharedPreferences.getInstance());
     notifyListeners();
   }

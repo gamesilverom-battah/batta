@@ -72,7 +72,7 @@ class _Look {
 
 /// الشخصيات اللي يقدر اللاعب يختارها (نفس CHARACTERS بـ server/src/server.js)
 const characterNames = <String, String>{
-  'khalfan': 'خلفان التفق',
+  'khalfan': 'خلفان',
   'khusaib': 'خصيب',
   'marhoon': 'مرهون',
   'musabbah': 'سعيد',

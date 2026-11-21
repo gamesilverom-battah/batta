@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart' show StringCharacters;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
@@ -84,6 +85,8 @@ class GameClient extends ChangeNotifier {
   Future<void> loadPrefs() async {
     final p = await SharedPreferences.getInstance();
     name = p.getString('name') ?? '';
+    final saved = p.getString('activeGame');
+    _saved = saved == null ? null : jsonDecode(saved) as Map<String, dynamic>;
     char = p.getString('char');
     // شخصية مقفلة (ما انشرت): ما تنستخدم
     if (char != null && !Wallet.instance.owns('char', char!)) char = null;
@@ -125,6 +128,12 @@ class GameClient extends ChangeNotifier {
     }
   }
 
+  /// أطول اسم (حروف وأرقام ومسافات ورموز)، نفس السيرفر
+  static const nameMax = 10;
+
+  /// اسمه أطول من المسموح (من النسخ القديمة): لازم يغيّره، وما ينحسب من المرات المجانية
+  bool get nameTooLong => name.characters.length > nameMax;
+
   /// تغيير الاسم: أول مرة (شاشة الاسم) مجاني، وبعدها مرتين مجاناً، والباقي بـ 1$ (قريباً مع الشراء الحقيقي)
   static const freeNameChanges = 2;
   int nameChangesUsed = 0;
@@ -154,7 +163,128 @@ class GameClient extends ChangeNotifier {
   /// اتصال الأصدقاء (الحضور): يبدأ أول ما يكون عندنا اسم
   void startFriends() => Friends.instance.start(url: serverUrl, name: name, char: char);
 
+  // ---------- الرجوع للدور ----------
+  // الدور الشغّال (أونلاين أو غرفة مخصصة) ينحفظ: لو فصل النت أو انقفلت اللعبة يقدر يرجع له
+  Map<String, dynamic>? _saved;
+  Map<String, dynamic>? rejoinOffer; // السيرفر قال مقعده له: نسأله «ترجع للدور؟»
+  Map<String, dynamic>? subOffer; // دور شغّال ناقصه لاعب (وهو يدوّر): «تدخل؟»
+  String? notice; // رسالة تطلع له (مثلاً دخل لاعب مكانه)
+  /// تنبيه بالطاولة: لاعب فصل (والبوت مكانه)، رجع، أو دخل بديل مكانه. يطلع 4 ثواني
+  ({String text, DateTime at})? seatNote;
+  Map<String, dynamic>? _lastSearch; // آخر بحث (لو رفض البديل يرجع يدوّر)
+  bool _checking = false;
+
+  bool get hasSavedGame => _saved != null;
+
+  /// دور شغّال وأنا فيه (مو تدريب، وما خلص)
+  bool get inRunningGame => started && room?['practice'] != true && view != null && view!['phase'] != 'matchEnd';
+
+  Future<void> _saveGame() async {
+    final p = await SharedPreferences.getInstance();
+    if (_saved == null) {
+      await p.remove('activeGame');
+    } else {
+      await p.setString('activeGame', jsonEncode(_saved));
+    }
+  }
+
+  /// فتح اللعبة (أو رجع للقائمة) وعنده دور محفوظ: نسأل السيرفر إذا مقعده لسه له
+  void checkRejoin() {
+    final s = _saved;
+    if (s == null || _checking || rejoinOffer != null || room != null) return;
+    _checking = true;
+    _open(() => _send({'t': 'rejoinCheck', 'code': s['code'], 'token': s['token']}));
+  }
+
+  /// «ارجع»: نفس المقعد والمبلغ
+  void acceptRejoin() {
+    final s = _saved;
+    rejoinOffer = null;
+    if (s == null) return notifyListeners();
+    code = s['code'] as String;
+    token = s['token'] as String;
+    matchFromSearch = s['search'] == true;
+    Wallet.instance.resume(code!, s['stake'] as int?);
+    _savePrefs();
+    _send({'t': 'join', 'code': code, 'token': token, 'name': name, 'inGame': true, 'fc': Friends.instance.myCode, 'profile': Progress.instance.publicProfile()});
+    notifyListeners();
+  }
+
+  /// «لا»: يخسر الرهان على طول، والبوت يكمل مكانه لين يجي بديل
+  void declineRejoin() {
+    final s = _saved;
+    rejoinOffer = null;
+    if (s != null) _send({'t': 'forfeit', 'code': s['code'], 'token': s['token']});
+    _lostGame();
+    Future.delayed(const Duration(milliseconds: 300), _close);
+    notifyListeners();
+  }
+
+  /// الدور اللي كان فيه راح عليه (رفض، أو دخل بديل، أو خلص وهو مو موجود): خسارة
+  void _lostGame() {
+    final s = _saved;
+    if (s == null) return;
+    _saved = null;
+    _saveGame();
+    Wallet.instance.onLeave();
+    Progress.instance.recordForfeit(online: s['search'] == true);
+  }
+
+  void _close() {
+    if (room != null) return; // دخل شي ثاني بنفس الاتصال
+    _wantConnection = false;
+    _sub?.cancel();
+    _ch?.sink.close();
+    _ch = null;
+    connected = false;
+    connecting = false;
+    notifyListeners();
+  }
+
+  /// البديل: «ادخل» مكان اللاعب اللي فصل
+  void acceptSub() {
+    final o = subOffer;
+    subOffer = null;
+    if (o == null) return notifyListeners();
+    matchFromSearch = true;
+    _send({'t': 'subAccept', 'code': o['code'], 'seat': o['seat'], 'name': name, 'char': ?char});
+    notifyListeners();
+  }
+
+  /// البديل: «لا»، يكمل بحثه
+  void declineSub() {
+    final o = subOffer;
+    subOffer = null;
+    if (o != null) _send({'t': 'subDecline', 'code': o['code'], 'seat': o['seat']});
+    _searchAgain();
+    notifyListeners();
+  }
+
+  // العرض جاه قبل ما يدخل البحث: يرجع يدوّر عادي
+  void _searchAgain() {
+    final s = _lastSearch;
+    if (room == null && s != null) _send({...s, 'noSub': true});
+  }
+
+  void clearNotice() {
+    notice = null;
+    notifyListeners();
+  }
+
+  /// اللعبة انفتحت من رابط غرفة (…/?room=1234): تدخل هالغرفة بس
+  String? linkRoom;
+
+  /// رابط الغرفة الحالية للمشاركة: نفس عنوان السيرفر (https)، ويفتح الغرفة بس
+  String get roomLink {
+    final u = Uri.parse(serverUrl);
+    return Uri(scheme: u.scheme == 'wss' ? 'https' : 'http', host: u.host, port: u.hasPort ? u.port : null, queryParameters: {'room': code ?? ''}).toString();
+  }
+
+  /// المباراة جاية من «ابحث» (أونلاين)؟ الخبرة والتحديات والمتصدرين منها بس، مو من الغرفة المخصصة ولا التدريب
+  bool matchFromSearch = false;
+
   Future<void> createRoom() async {
+    matchFromSearch = false;
     Wallet.instance.roomStake = null;
     await _savePrefs();
     _open(() => _send({'t': 'create', 'name': name, 'char': ?char, 'fc': Friends.instance.myCode, 'profile': Progress.instance.publicProfile()}));
@@ -168,19 +298,24 @@ class GameClient extends ChangeNotifier {
   bool get roomSignals => room?['signals'] != false;
 
   Future<void> search(int mode, int score) async {
+    matchFromSearch = true;
     Wallet.instance.enterSearch();
     await _savePrefs();
-    _open(() => _send({'t': 'search', 'mode': mode, 'score': score, 'signals': signalsOn, 'name': name, 'char': ?char, 'fc': Friends.instance.myCode, 'profile': Progress.instance.publicProfile()}));
+    final msg = {'t': 'search', 'mode': mode, 'score': score, 'signals': signalsOn, 'name': name, 'char': ?char, 'fc': Friends.instance.myCode, 'profile': Progress.instance.publicProfile()};
+    _lastSearch = msg;
+    _open(() => _send(msg));
   }
 
   /// تدريب مع البوتات بدون وقت
   Future<void> practice(int mode) async {
+    matchFromSearch = false;
     Wallet.instance.roomStake = null;
     await _savePrefs();
     _open(() => _send({'t': 'practice', 'mode': mode, 'signals': signalsOn, 'name': name, 'char': ?char, 'fc': Friends.instance.myCode, 'profile': Progress.instance.publicProfile()}));
   }
 
   Future<void> joinRoom(String roomCode) async {
+    matchFromSearch = false;
     Wallet.instance.roomStake = null;
     await _savePrefs();
     final p = await SharedPreferences.getInstance();
@@ -219,7 +354,8 @@ class GameClient extends ChangeNotifier {
       notifyListeners();
     }).catchError((_) {
       if (_ch != ch || !_wantConnection) return;
-      if (attempt + 1 < _connectTries) {
+      // بالدور: يحاول لين يرجع النت (البوت يلعب مكانه وقتها)
+      if (attempt + 1 < _connectTries || (code != null && token != null && _saved != null)) {
         // نعيد المحاولة: كل محاولة تصحّي السيرفر لين يرد
         Future.delayed(const Duration(seconds: 3), () {
           if (_wantConnection && !connected && _ch == ch) _open(onOpen, attempt: attempt + 1);
@@ -240,7 +376,7 @@ class GameClient extends ChangeNotifier {
       // إعادة الاتصال تلقائياً لنفس المقعد
       Future.delayed(const Duration(seconds: 2), () {
         if (!_wantConnection || connected) return;
-        _open(() => _send({'t': 'join', 'code': code, 'token': token, 'name': name, 'fc': Friends.instance.myCode, 'profile': Progress.instance.publicProfile()}));
+        _open(() => _send({'t': 'join', 'code': code, 'token': token, 'name': name, 'inGame': _saved != null, 'fc': Friends.instance.myCode, 'profile': Progress.instance.publicProfile()}));
       });
     }
   }
@@ -254,6 +390,18 @@ class GameClient extends ChangeNotifier {
         _savePrefs();
       case 'room':
         room = m;
+        // الغرفة المخصصة بالغوازي: نفس نظام الأونلاين (ينخصم مع بداية المباراة، والفايز ياخذه وفوقه 70%)،
+        // واللي غوازيه ما تكفي ما يقدر يدخل (وإذا المضيف رفع المبلغ فوق رصيده يطلع)
+        final stake = m['stake'] as int?;
+        if (stake != null && !matchFromSearch) {
+          Wallet.instance.roomStake = stake;
+          if (m['started'] != true && Wallet.instance.balance < stake) {
+            leave();
+            error = trf('غوازيك ما تكفي لهالغرفة (الدخول {0})', [stake]);
+            notifyListeners();
+            return;
+          }
+        }
         if (m['started'] != true) {
           view = null;
           _resetPending();
@@ -289,6 +437,44 @@ class GameClient extends ChangeNotifier {
       case 'kicked':
         kicked = true;
         leave();
+      case 'rejoinInfo':
+        _checking = false;
+        if (m['ok'] == true) {
+          rejoinOffer = m;
+        } else {
+          // الدور خلص وهو مو موجود، أو دخل لاعب مكانه
+          if (_saved != null) notice = tr('الدور اللي طلعت منه خلص أو انلغى أو دخل لاعب مكانك، وانحسبت لك خسارة');
+          _lostGame();
+          _close();
+        }
+      case 'seatLost':
+        // رجع النت ومقعده راح
+        final had = _saved != null || view != null;
+        _lostGame();
+        leave();
+        if (had) notice = m['cancelled'] == true ? tr('الدور انلغى لأن كل اللاعبين فصلوا، وانحسبت لك خسارة') : tr('دخل لاعب مكانك بالدور، وانحسبت لك خسارة');
+      case 'subOffer':
+        subOffer = m;
+      case 'seatEvent':
+        final who = m['name'] as String? ?? '';
+        final text = switch (m['kind']) {
+          'gone' => trf('{0} فصل، والبوت يلعب مكانه', [who]),
+          'back' => trf('{0} رجع للدور', [who]),
+          _ => trf('{0} دخل مكان {1}', [who, m['old'] ?? '']),
+        };
+        final note = (text: text, at: DateTime.now());
+        seatNote = note;
+        Future.delayed(const Duration(seconds: 4), () {
+          if (seatNote == note) {
+            seatNote = null;
+            notifyListeners();
+          }
+        });
+      case 'subGone':
+        subOffer = null;
+        _searchAgain();
+      case 'forfeited':
+        break;
     }
     notifyListeners();
   }
@@ -325,8 +511,17 @@ class GameClient extends ChangeNotifier {
     deadline = ms == null ? null : receivedAt.add(Duration(milliseconds: ms));
     _holdUntil = DateTime.now().add(Duration(milliseconds: _animMs(before, v)));
     // الإحصائيات قبل المحفظة (المحفظة تنسى المبلغ بعد نهاية المباراة)
-    Progress.instance.onState(code: code, view: v, mySeat: mySeat, online: Wallet.instance.roomStake != null);
+    Progress.instance.onState(code: code, view: v, mySeat: mySeat, online: Wallet.instance.roomStake != null && matchFromSearch);
     Wallet.instance.onState(code: code, phase: v['phase'] as String?, winner: v['winner'] as int?, myTeam: mySeat % 2);
+    // الدور الشغّال ينحفظ (عشان لو فصل يرجع له)، ولما يخلص ينشال
+    final running = room?['practice'] != true && v['phase'] != 'matchEnd';
+    if (running && (_saved == null || _saved!['code'] != code)) {
+      _saved = {'code': code, 'token': token, 'search': matchFromSearch, 'stake': Wallet.instance.roomStake};
+      _saveGame();
+    } else if (!running && _saved != null) {
+      _saved = null;
+      _saveGame();
+    }
     notifyListeners();
   }
 
@@ -369,6 +564,7 @@ class GameClient extends ChangeNotifier {
   void start() => _send({'t': 'start'});
   void setMode(int mode) => _send({'t': 'mode', 'mode': mode});
   void setSignals(bool on) => _send({'t': 'signals', 'on': on});
+  void setRoomStake(int value) => _send({'t': 'stake', 'value': value});
   void rematch() => _send({'t': 'rematch'});
 
   // أوامر اللعب
@@ -411,7 +607,13 @@ class GameClient extends ChangeNotifier {
   void signal(List<String> suits) => _send({'t': 'signal', 'suits': suits});
 
   void leave() {
-    Wallet.instance.onLeave();
+    // طلع من دور شغّال: البوت يلعب مكانه، ويقدر يرجع (القائمة تسأله)
+    final keep = inRunningGame && _saved != null;
+    Wallet.instance.onLeave(keepStake: keep);
+    if (!keep && _saved != null && !started) {
+      _saved = null;
+      _saveGame();
+    }
     _wantConnection = false;
     _sub?.cancel();
     _ch?.sink.close();

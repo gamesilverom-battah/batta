@@ -1,4 +1,4 @@
-// معاينة المتجر والغوازي: flutter test test/capture_store_test.dart -> build/preview_store_*.png
+﻿// معاينة المتجر والغوازي: flutter test test/capture_store_test.dart -> build/preview_store_*.png
 import 'dart:io';
 import 'dart:ui' as ui;
 
@@ -9,6 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:kout/cards.dart';
 import 'package:kout/friends.dart';
 import 'package:kout/main.dart';
+import 'package:kout/progress_pages.dart';
 import 'package:kout/net.dart';
 import 'package:kout/progress.dart';
 import 'package:kout/sounds.dart';
@@ -188,7 +189,7 @@ void main() {
       await _tap(tester, find.text('التحديات'));
       await _shot(tester, 'build/preview_store_${name}_challenges.png');
       await _tap(tester, find.byIcon(Icons.arrow_back).first);
-      await _tap(tester, find.text('تاريخك'));
+      await _tap(tester, find.byType(ProfileCard));
       await _shot(tester, 'build/preview_store_${name}_history.png');
       await _tap(tester, find.byIcon(Icons.arrow_back).first);
       // أونلاين: كل الأطوار بصفحة وحدة، وزر البحث

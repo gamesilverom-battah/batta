@@ -38,14 +38,18 @@ class _PressableState extends State<Pressable> {
       );
 }
 
-/// انتقال بسيط بين الصفحات: الجديدة تدخل بتلاشي وحركة خفيفة. id يتغير مع كل صفحة
+/// انتقال بين الصفحات: الجديدة تدخل بتلاشي وحركة خفيفة. id يتغير مع كل صفحة.
+/// zoom (القوائم الرئيسية): الشاشة «تدخل» داخل الخيار اللي انضغط (origin: مكان الضغطة)،
+/// فالقديمة تكبر وتختفي والجديدة تطلع من مكان الخيار. back: الرجوع بالعكس (الجديدة تصغر لمكانها من فوق)
 class PageSwitcher extends StatelessWidget {
   final Object id;
   final Widget child;
-  const PageSwitcher({super.key, required this.id, required this.child});
+  final bool zoom, back;
+  final Offset? origin;
+  const PageSwitcher({super.key, required this.id, required this.child, this.zoom = false, this.back = false, this.origin});
 
   @override
-  Widget build(BuildContext context) => AnimatedSwitcher(
+  Widget build(BuildContext context) => zoom ? _zoom() : AnimatedSwitcher(
         duration: const Duration(milliseconds: 260),
         switchInCurve: Curves.easeOut,
         switchOutCurve: Curves.easeIn,
@@ -56,6 +60,29 @@ class PageSwitcher extends StatelessWidget {
         layoutBuilder: (current, previous) => Stack(fit: StackFit.expand, children: [...previous, ?current]),
         child: KeyedSubtree(key: ValueKey(id), child: child),
       );
+
+  Widget _zoom() => LayoutBuilder(builder: (context, box) {
+        final o = origin;
+        final align = back || o == null || box.maxWidth == 0
+            ? Alignment.center
+            : Alignment((o.dx / box.maxWidth) * 2 - 1, (o.dy / box.maxHeight) * 2 - 1);
+        return AnimatedSwitcher(
+          duration: const Duration(milliseconds: 240),
+          switchInCurve: Curves.easeOutCubic,
+          switchOutCurve: Curves.easeInCubic,
+          transitionBuilder: (page, a) {
+            final incoming = page.key == ValueKey(id);
+            // داخل: الجديدة من صغيرة لمكانها، والقديمة تكبر (كأنك دخلت فيها). رجوع: بالعكس
+            final from = incoming ? (back ? 1.25 : 0.2) : (back ? 0.8 : 1.8);
+            return FadeTransition(
+              opacity: incoming ? a : CurvedAnimation(parent: a, curve: const Interval(0.3, 1)),
+              child: ScaleTransition(scale: Tween(begin: from, end: 1.0).animate(a), alignment: align, child: page),
+            );
+          },
+          layoutBuilder: (current, previous) => Stack(fit: StackFit.expand, children: [...previous, ?current]),
+          child: KeyedSubtree(key: ValueKey(id), child: child),
+        );
+      });
 }
 
 /// الإعدادات: من القائمة الرئيسية ومن داخل اللعبة
@@ -239,7 +266,7 @@ class _NameChangeDialogState extends State<_NameChangeDialog> {
             enabled: free,
             autofocus: free,
             textAlign: TextAlign.center,
-            maxLength: 20,
+            maxLength: GameClient.nameMax,
             style: const TextStyle(fontSize: 20, color: Colors.white),
             decoration: InputDecoration(labelText: tr('اسمك الجديد'), counterText: ''),
             onSubmitted: (_) => _save(),

@@ -125,6 +125,26 @@ function decidePlay(state, seat) {
   if (state.trick.some((t) => t.card === E.GREY && t.seat !== seat && E.teamOf(t.seat) === myTeam) && legal.some((c) => c !== E.BLUE)) {
     legal = legal.filter((c) => c !== E.BLUE);
   }
+  // زميله ماسك اللمّة بحكم، والخصوم كلهم بان إنهم خلص حكمهم (رموا غير الحكم على افتتاح بحكم):
+  // محد يقدر يغلب زميله، فما يرمي الجوكر حتى لو حكم زميله صغير
+  // (إلا إذا لازم: خطر يخيس الكبير، أو آخر فرصة للصغير)
+  if (mateWinning && hand.some(E.isJoker)) {
+    const w = E.trickWinner(state.trick, trump);
+    const mateCard = state.trick.find((t) => t.seat === w).card;
+    const oppSeats = Array.from({ length: state.players }, (_, s) => s).filter((s) => E.teamOf(s) !== myTeam);
+    const trumpDone = (s) => [...(state.tricks || []).map((t) => t.cards), state.trick].some((cards) =>
+      cards.length && E.suitOf(cards[0].card, trump) === trump && cards.some((x) => x.seat === s && E.suitOf(x.card, trump) !== trump));
+    if (!E.isJoker(mateCard) && mateCard[0] === trump && oppSeats.every(trumpDone)) {
+      const keep = legal.filter((c) => (c !== E.BLUE || blueRisk) && (c !== E.GREY || (deadlineOpen && lastChance)));
+      if (keep.length) legal = keep;
+      // ما بقى جوكر لازم ينرمى: يخليها لزميله بأصغر ورقة (من النوع المنزول إذا عنده)
+      if (!legal.some(E.isJoker)) {
+        const led = E.suitOf(state.trick[0].card, trump);
+        const same = legal.filter((c) => E.suitOf(c, trump) === led);
+        return lowest(same.length ? same : legal, trump);
+      }
+    }
+  }
   if (ledTrump && !blueRisk && !greyRisk) {
     // الافتتاح بحكم وعنده أكبر حكم باقي (ومعه جوكر): يرمي الحكم ويخلي الجوكر
     const myTop = legal.filter((c) => !E.isJoker(c) && c[0] === trump).sort((a, b) => E.rankOf(b) - E.rankOf(a))[0];
@@ -141,8 +161,11 @@ function decidePlay(state, seat) {
   }
 
   // الكبير ما يفتتح: إذا خلاه لآخر ورقة والافتتاح عنده يخيسه ويخسر المباراة.
-  // ينلعب طبيعي، وما يضطر يرميه إلا إذا فيه خطر يخيسه (blueRisk فوق)
-  if (blueRisk && legal.includes(E.BLUE) && state.trick.length > 0 && !E.blueLosesMatch(state, seat)) return E.BLUE;
+  // ينلعب طبيعي، وما يضطر يرميه إلا إذا فيه خطر يخيسه (blueRisk فوق).
+  // بس إذا زميله ماسك اللمّة ما يضيّعه فوقه، إلا إذا الخطر قريب: باقي معه 3 أوراق أو أقل (5 بلعبة الأربعة، الافتتاح يرجع له أسرع)،
+  // أو كل ورقه الباقي أكبر أوراق موجودة (بياخذ كل اللمّات الجاية والافتتاح يبقى عنده)
+  const blueCritical = hand.length <= (state.players === 4 ? 5 : 3) || (others.length > 0 && others.every(isTopLeft));
+  if (blueRisk && (!mateWinning || blueCritical) && legal.includes(E.BLUE) && state.trick.length > 0 && !E.blueLosesMatch(state, seat)) return E.BLUE;
   if (deadlineOpen && state.trickNo >= 1 && state.trick.length > 0 && (!mateWinning || lastChance)) {
     if (state.madmoon && seat === state.buyer && legal.includes(E.BLUE)) return E.BLUE;
     if (legal.includes(E.GREY)) return E.GREY;
@@ -223,12 +246,29 @@ function decidePlay(state, seat) {
     return true;
   };
 
-  // زميله الشاري افتتح بحكم صغير (فيه حكم أكبر منه ما نزل): يرمي الجوكر إذا عنده، وإلا أكبر حكم
+  // زميله الشاري افتتح بحكم:
+  // - حكم الشاري للحين يفوز باللمّة: يرمي حكم مو جوكر. إذا باقي خصم بعده وحكم الشاري مو أكبر حكم باقي،
+  //   يرمي أكبر حكم عنده يغلب (يرفع اللمّة على الخصوم)، وإلا أصغر حكم. وإذا ما عنده حكم: أصغر ورقة.
+  // - الخصم غلب حكم الشاري: يرمي الجوكر إذا عنده (اللي يغلب)، وإلا أكبر حكم
   const lead = state.trick[0];
-  if (lead.seat === state.buyer && E.teamOf(lead.seat) === myTeam && !E.isJoker(lead.card) && lead.card[0] === trump && !isTop(lead.card)) {
-    const joker = [E.GREY, E.BLUE].find((j) => legal.includes(j));
-    if (joker) return joker;
-    if (trumps.length) return highest(trumps, trump);
+  if (lead.seat === state.buyer && lead.seat !== seat && E.teamOf(lead.seat) === myTeam && !E.isJoker(lead.card) && lead.card[0] === trump) {
+    if (mateWinning) {
+      const after = state.players - 1 - state.trick.length;
+      const oppAfter = Array.from({ length: after }, (_, i) => (seat + 1 + i) % state.players).some((s) => E.teamOf(s) !== myTeam);
+      const w = E.trickWinner(state.trick, trump);
+      const mateCard = state.trick.find((t) => t.seat === w).card;
+      if (trumps.length) {
+        const up = trumps.filter(wins);
+        if (oppAfter && !E.isJoker(mateCard) && !isTopLeft(mateCard) && up.length) return highest(up, trump);
+        return lowest(trumps, trump);
+      }
+      return lowest(nonTrumps.length ? nonTrumps : plain, trump);
+    }
+    if (!isTop(lead.card) || !mateWinning) {
+      const joker = [E.GREY, E.BLUE].find((j) => legal.includes(j) && wins(j));
+      if (joker) return joker;
+      if (trumps.length) return highest(trumps, trump);
+    }
   }
 
   // البوت هو الشاري والافتتاح بحكم: يلعب أكبر حكم باقي أو جوكر،
